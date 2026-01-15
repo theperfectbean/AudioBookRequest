@@ -53,53 +53,35 @@ def extract_surname(name: str) -> str:
 
 
 def extract_first_name(name: str) -> str:
-    """Extract the first word from an author name as first name."""
+    """Extract the first name(s) from an author name (everything except surname)."""
     normalized = normalize_author_name(name)
     if not normalized:
         return ""
     parts = normalized.split()
-    return parts[0] if len(parts) > 1 else ""
+    return " ".join(parts[:-1]) if len(parts) > 1 else ""
 
 
-def get_author_variants(author_name: str) -> List[str]:
+def extract_search_author_components(query: str) -> Tuple[str, str]:
     """
-    Generate variants of an author name for flexible matching.
-    Returns list of normalized variants.
+    Extract first and last name components from search query.
+    
+    Returns:
+        Tuple of (first_name, last_name)
     """
-    normalized = normalize_author_name(author_name)
-    variants = [normalized]
+    # Clean and split query
+    normalized = normalize_author_name(query)
+    if not normalized:
+        return "", ""
     
-    # Extract surname
-    surname = extract_surname(author_name)
-    if surname and surname not in variants:
-        variants.append(surname)
+    parts = normalized.split()
+    if len(parts) == 1:
+        # Only one word - treat as surname
+        return "", parts[0]
+    elif len(parts) >= 2:
+        # Multiple words - last is surname, rest is first name
+        return " ".join(parts[:-1]), parts[-1]
     
-    # Extract first name + surname
-    first_name = extract_first_name(author_name)
-    if first_name and surname:
-        first_last = f"{first_name} {surname}"
-        if first_last not in variants:
-            variants.append(first_last)
-    
-    # Reverse (surname, first name) format
-    if first_name and surname:
-        reverse = f"{surname} {first_name}"
-        if reverse not in variants:
-            variants.append(reverse)
-    
-    # Initials format (e.g., "J. K. Rowling" -> "jk rowling")
-    initials = "".join([part[0] for part in normalized.split() if part])
-    if initials and initials not in variants:
-        variants.append(initials)
-    
-    # First name + initial of surname
-    if first_name and surname:
-        first_initial = surname[0]
-        first_plus_initial = f"{first_name} {first_initial}"
-        if first_plus_initial not in variants:
-            variants.append(first_plus_initial)
-    
-    return variants
+    return "", ""
 
 
 def calculate_author_match_score(
@@ -108,69 +90,86 @@ def calculate_author_match_score(
     threshold: float = 70.0
 ) -> Tuple[float, str, str]:
     """
-    Calculate how well the book's authors match the search query.
+    Calculate how well the book's authors match the search query using semantic matching.
     
     Returns:
         Tuple of (score, match_type, explanation)
         - score: 0-100 match score
-        - match_type: "exact", "partial", "surname", "nickname", "none"
+        - match_type: "exact", "surname_only", "weak", "none"
         - explanation: human-readable description of the match
     """
     if not book_authors or not search_query:
         return 0.0, "none", "No authors or query"
     
-    # Normalize search query for author extraction
-    # Assume query might contain author name, extract potential author parts
-    query_parts = search_query.lower().split()
+    # Extract search components
+    search_first, search_last = extract_search_author_components(search_query)
     
-    # Filter out common stop words that might be in title
-    stop_words = {"the", "a", "an", "of", "and", "or", "in", "on", "at", "to", "for", "with", "by"}
-    potential_author_terms = [part for part in query_parts if part not in stop_words or len(part) > 2]
-    
-    if not potential_author_terms:
-        potential_author_terms = query_parts
+    if not search_last:
+        return 0.0, "none", "No surname found in query"
     
     best_score = 0.0
     best_match_type = "none"
     best_explanation = "No match found"
     
     for author in book_authors:
-        author_variants = get_author_variants(author)
+        author_first = extract_first_name(author)
+        author_last = extract_surname(author)
         
-        # Try exact matching with variants
-        for variant in author_variants:
-            # Jaro-Winkler similarity for fuzzy matching
-            similarity = fuzz.ratio(variant, " ".join(potential_author_terms))
+        if not author_last:
+            continue
+        
+        # Check for exact match (both first and last name match)
+        if (search_first and author_first and 
+            search_first == author_first and search_last == author_last):
+            score = 95.0
+            match_type = "exact"
+            explanation = f"Exact match: '{author}'"
             
-            # Also try partial matching
-            partial_similarity = fuzz.partial_ratio(variant, " ".join(potential_author_terms))
+            if score > best_score:
+                best_score = score
+                best_match_type = match_type
+                best_explanation = explanation
+        
+        # Check for surname-only match (same surname, different first name)
+        elif search_last == author_last:
+            if search_first and author_first and search_first != author_first:
+                score = 30.0
+                match_type = "surname_only"
+                explanation = f"Surname match: '{author_last}' (different first name)"
+            elif not search_first or not author_first:
+                # One of the names doesn't have a first name
+                score = 35.0
+                match_type = "surname_only"
+                explanation = f"Surname match: '{author_last}'"
+            else:
+                continue
             
-            # Take the better of full or partial match
-            match_score = max(similarity, partial_similarity)
+            if score > best_score:
+                best_score = score
+                best_match_type = match_type
+                best_explanation = explanation
+        
+        # Check for weak partial match (some word overlap)
+        else:
+            # Check if any words from search appear in author name
+            search_words = set(search_query.lower().split())
+            author_words = set(normalize_author_name(author).split())
             
-            if match_score > best_score:
-                best_score = match_score
-                surname = extract_surname(author)
-                query_surname = extract_surname(" ".join(potential_author_terms))
+            # Remove common stop words
+            stop_words = {"the", "a", "an", "of", "and", "or", "in", "on", "at", "to", "for", "with", "by"}
+            search_words = {w for w in search_words if w not in stop_words and len(w) > 2}
+            author_words = {w for w in author_words if w not in stop_words and len(w) > 2}
+            
+            overlap = search_words.intersection(author_words)
+            if overlap and len(overlap) >= 1:
+                score = 10.0
+                match_type = "weak"
+                explanation = f"Weak match: common words {list(overlap)}"
                 
-                # Determine match type
-                if match_score >= 95:
-                    best_match_type = "exact"
-                    best_explanation = f"Exact match: '{author}'"
-                elif match_score >= threshold:
-                    if surname and query_surname and surname == query_surname:
-                        best_match_type = "surname"
-                        best_explanation = f"Surname match: '{surname}'"
-                    else:
-                        best_match_type = "partial"
-                        best_explanation = f"Partial match: '{author}' (score: {match_score:.1f})"
-                elif match_score >= threshold * 0.7:
-                    if surname and query_surname and surname == query_surname:
-                        best_match_type = "surname"
-                        best_explanation = f"Weak surname match: '{surname}'"
-                    else:
-                        best_match_type = "nickname"
-                        best_explanation = f"Possible nickname/variant: '{author}'"
+                if score > best_score:
+                    best_score = score
+                    best_match_type = match_type
+                    best_explanation = explanation
     
     return best_score, best_match_type, best_explanation
 
@@ -236,8 +235,8 @@ def partition_results_by_score(
     Partition ranked results into best matches and other matches.
     
     Best matches are those with:
-    - Author score >= threshold
-    - Match type of "exact" or "partial"
+    - Author score >= 90 (exact matches)
+    - Match type of "exact"
     - Overall score >= 70
     
     Returns:
@@ -253,8 +252,8 @@ def partition_results_by_score(
         
         # Determine if this is a best match
         is_best = (
-            author_score >= 70 and
-            match_type in ['exact', 'partial'] and
+            author_score >= 90 and
+            match_type == 'exact' and
             score >= 70
         )
         
@@ -310,9 +309,9 @@ def rank_search_results(
         
         # Determine if this is a best match
         is_best_match = (
-            author_score >= author_threshold and
-            match_type in ['exact', 'partial', 'surname'] and
-            combined_score >= 65
+            author_score >= 90 and
+            match_type == 'exact' and
+            combined_score >= 70
         )
         
         ranked_results.append({

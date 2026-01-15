@@ -144,7 +144,7 @@ class RankedAudiobookSearchResult(AudiobookSearchResult):
     relevance_score: float = 0.0
     author_score: float = 0.0
     secondary_score: float = 0.0
-    match_type: str = "none"  # "exact", "partial", "surname", "none"
+    match_type: str = "none"  # "exact", "surname_only", "weak", "none"
     match_explanation: str = ""
     is_best_match: bool = False
 
