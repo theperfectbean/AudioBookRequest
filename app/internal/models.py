@@ -83,6 +83,9 @@ class Audiobook(BaseSQLModel, table=True):
         ),
     )
     downloaded: bool = False
+    prowlarr_count: int | None = Field(default=None)
+    freeleech: bool = Field(default=False)
+    last_prowlarr_query: datetime | None = Field(default=None)
 
     requests: list["AudiobookRequest"] = Relationship(back_populates="audiobook")  # pyright: ignore[reportAny]
 
@@ -133,6 +136,17 @@ class AudiobookSearchResult(BaseModel):
         if self.username:
             return any(req.user_username == self.username for req in self.requests)
         return len(self.requests) > 0
+
+
+class RankedAudiobookSearchResult(AudiobookSearchResult):
+    """Enhanced search result with author relevance scoring."""
+    
+    relevance_score: float = 0.0
+    author_score: float = 0.0
+    secondary_score: float = 0.0
+    match_type: str = "none"  # "exact", "partial", "surname", "none"
+    match_explanation: str = ""
+    is_best_match: bool = False
 
 
 class AudiobookWishlistResult(BaseModel):
@@ -284,3 +298,18 @@ class APIKey(BaseSQLModel, table=True):
         ),
     )
     enabled: bool = True
+
+
+class MetadataCache(BaseSQLModel, table=True):
+    """Cache table for metadata enrichment results."""
+    search_key: str = Field(primary_key=True)
+    provider: str = Field(primary_key=True)
+    metadata_json: str
+    created_at: datetime = Field(
+        default_factory=datetime.now,
+        sa_column=Column(
+            server_default=func.now(),
+            type_=DateTime,
+            nullable=False,
+        ),
+    )
