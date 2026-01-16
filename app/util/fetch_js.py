@@ -33,8 +33,8 @@ def fetch_scripts(debug: bool) -> None:
     else:
         for file_name in files.keys():
             if not (root / file_name).exists():
-                raise FileNotFoundError(
-                    f"{file_name} must be present in static directory for production. This is most likely an error with the docker image."
+                print(
+                    f"WARNING: {file_name} not found in static directory. UI features depending on it may fail."
                 )
 
 

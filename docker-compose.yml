@@ -8,15 +8,21 @@ services:
         - VERSION=local
     volumes:
       - ./config:/config
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     ports:
       - "8000:8000"
+    networks:
+      - default
 
   gotify:
     image: gotify/server
     ports:
-      - "8080:80"
+      - "8082:80"
     volumes:
       - ./data/gotify/data:/app/data
+    networks:
+      - default
 
   psql:
     image: postgres:15
@@ -28,3 +34,25 @@ services:
       - ./data/postgres:/var/lib/postgresql/data
     ports:
       - "5432:5432"
+    networks:
+      - default
+
+  aider:
+    image: paulgauthier/aider:latest
+    container_name: abr-dev-aider
+    profiles: [tools]
+    volumes:
+      - .:/app
+      - ~/.aider.conf.yml:/root/.aider.conf.yml:ro
+      - ~/.cache/aider:/root/.cache/aider
+    working_dir: /app
+    environment:
+      - OPENROUTER_API_KEY=${OPENROUTER_API_KEY}
+    stdin_open: true
+    tty: true
+    networks:
+      - default
+
+networks:
+  default:
+    driver: bridge

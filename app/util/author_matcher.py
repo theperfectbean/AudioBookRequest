@@ -121,7 +121,7 @@ def calculate_author_match_score(
         # Check for exact match (both first and last name match)
         if (search_first and author_first and 
             search_first == author_first and search_last == author_last):
-            score = 95.0
+            score = 100.0  # CHANGED FROM 95.0
             match_type = "exact"
             explanation = f"Exact match: '{author}'"
             
@@ -179,24 +179,24 @@ def calculate_secondary_score(
     search_query: str
 ) -> float:
     """
-    Calculate secondary scoring based on title relevance, recency, and popularity.
+    Calculate secondary scoring based on title relevance and recency.
     Returns score 0-100.
     """
     score = 0.0
     
-    # Title similarity (40% weight)
+    # Title similarity (60% weight - INCREASED from 40%)
     title_normalized = book.title.lower()
     query_normalized = search_query.lower()
     
     title_similarity = fuzz.partial_ratio(title_normalized, query_normalized)
-    score += (title_similarity * 0.4)
+    score += (title_similarity * 0.6)
     
-    # Recency (30% weight) - newer books get slight boost
+    # Recency (40% weight - INCREASED from 30%)
     if book.release_date:
         from datetime import datetime, timezone
         # Make datetime.now() timezone-aware to match book.release_date
         now = datetime.now(timezone.utc)
-        # Ensure book.release_date is also timezone-aware
+        # FIXED: Handle both naive and aware datetimes
         if book.release_date.tzinfo is None:
             release_date = book.release_date.replace(tzinfo=timezone.utc)
         else:
@@ -211,58 +211,11 @@ def calculate_secondary_score(
             recency_score = 60
         else:
             recency_score = 40
-        score += (recency_score * 0.3)
+        score += (recency_score * 0.4)
     
-    # Popularity based on runtime (30% weight) - longer books often more popular
-    if book.runtime_length_min:
-        if book.runtime_length_min > 600:
-            popularity_score = 100
-        elif book.runtime_length_min > 300:
-            popularity_score = 80
-        elif book.runtime_length_min > 120:
-            popularity_score = 60
-        else:
-            popularity_score = 40
-        score += (popularity_score * 0.3)
+    # REMOVED: Runtime-based "popularity" scoring (was incorrect)
     
     return min(score, 100.0)
-
-
-def partition_results_by_score(
-    ranked_results: List[Dict[str, Any]]
-) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
-    """
-    Partition ranked results into best matches and other matches.
-    
-    Best matches are those with:
-    - Author score >= 90 (exact matches)
-    - Match type of "exact"
-    - Overall score >= 70
-    
-    Returns:
-        Tuple of (best_matches, other_matches)
-    """
-    best_matches = []
-    other_matches = []
-    
-    for result in ranked_results:
-        score = result['score']
-        author_score = result['author_score']
-        match_type = result['match_type']
-        
-        # Determine if this is a best match
-        is_best = (
-            author_score >= 90 and
-            match_type == 'exact' and
-            score >= 70
-        )
-        
-        if is_best:
-            best_matches.append(result)
-        else:
-            other_matches.append(result)
-    
-    return best_matches, other_matches
 
 
 def rank_search_results(
@@ -309,9 +262,9 @@ def rank_search_results(
         
         # Determine if this is a best match
         is_best_match = (
-            author_score >= 90 and
+            author_score >= 95 and  # CHANGED FROM 90
             match_type == 'exact' and
-            combined_score >= 70
+            combined_score >= 75  # CHANGED FROM 70
         )
         
         ranked_results.append({
@@ -326,5 +279,34 @@ def rank_search_results(
     
     # Sort by overall score (descending)
     ranked_results.sort(key=lambda x: x['score'], reverse=True)
-    
+
     return ranked_results
+
+
+def partition_results_by_score(
+    ranked_results: List[Dict[str, Any]],
+    author_threshold: float = 95.0
+) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+    """
+    Partition ranked results into best matches and others.
+
+    Args:
+        ranked_results: List of ranked result dictionaries
+        author_threshold: Minimum author score to be considered best match
+
+    Returns:
+        Tuple of (best_matches, other_matches)
+    """
+    best_matches: List[Dict[str, Any]] = []
+    other_matches: List[Dict[str, Any]] = []
+
+    for result in ranked_results:
+        author_score = result.get('author_score', 0)
+        match_type = result.get('match_type', 'none')
+
+        if author_score >= author_threshold and match_type == 'exact':
+            best_matches.append(result)
+        else:
+            other_matches.append(result)
+
+    return best_matches, other_matches

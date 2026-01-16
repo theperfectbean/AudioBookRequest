@@ -6,7 +6,7 @@
   <div class="overflow-x-auto h-[75vh] border-b pb-2 border-b-base-200">
     {% block book_wishlist %}
       {% if update_tablist %}{% include "wishlist_page/tablist.html" %}{% endif %}
-      <table id="book-table-body" class="table table-pin-rows min-w-240">
+      <table id="book-table-body" class="table table-pin-rows w-full">
         <thead>
           <tr>
             <th></th>
@@ -72,10 +72,12 @@
                 <td title="{{ result.requested_by }}">{{ result.amount_requested }}</td>
                 <td class="grid grid-cols-2 min-w-32 gap-1">
                   <a preload
-                     title="Torrent Sources"
+                     title="{% if book.prowlarr_count == 0 %}No sources found on Prowlarr (last checked: {{ book.last_prowlarr_query.strftime('%Y-%m-%d %H:%M') if book.last_prowlarr_query else 'never' }}){% elif book.prowlarr_count %}Sources: {{ book.prowlarr_count }} (last checked: {{ book.last_prowlarr_query.strftime('%Y-%m-%d %H:%M') if book.last_prowlarr_query else 'never' }}){% else %}Torrent Sources{% endif %}"
                      href="{{ base_url }}/wishlist/sources/{{ book.asin }}"
                      {% if not user.is_admin() %}disabled{% endif %}
-                     class="btn btn-square">{% include "icons/list.html" %}</a>
+                     class="btn btn-square {% if book.prowlarr_count == 0 %}btn-outline btn-error{% endif %}">
+                    {% include "icons/list.html" %}
+                  </a>
                     <button {% if book.downloaded %}title="Downloaded"class="btn btn-square btn-ghost bg-success text-neutral/20" {% else %} title="Automatic Download" class="btn btn-square" {% endif %}
                             {% if not user.can_download() or book.downloaded %}disabled{% endif %}
                             hx-post="{{ base_url }}/wishlist/auto-download/{{ book.asin }}"

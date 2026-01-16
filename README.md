@@ -212,6 +212,120 @@ The docker compose can also be used to run the app locally:
 docker compose --profile local up --build
 ```
 
+## Testing
+
+This project includes a comprehensive test suite for validating the Prowlarr search integration and other critical features.
+
+### Running Tests
+
+Install test dependencies:
+
+```bash
+# Install all dependencies including test dependencies
+uv sync --dev
+
+# Or install test dependencies specifically
+uv sync --group test
+```
+
+Run the test suite:
+
+```bash
+# Run all tests
+uv run pytest tests/
+
+# Run with verbose output
+uv run pytest tests/ -v
+
+# Run specific test file
+uv run pytest tests/test_prowlarr_search.py -v
+
+# Run with coverage report
+uv run pytest tests/ --cov=app --cov-report=html
+# View coverage: open htmlcov/index.html in browser
+```
+
+### Test Structure
+
+The test suite covers:
+
+1. **Author Matching Tests** - Validates the fuzzy matching logic for author names
+   - Exact matches
+   - Unknown author handling
+   - Surname collision prevention
+   - Multi-word vs single-word author thresholds
+
+2. **Virtual ASIN Generation Tests** - Ensures deterministic ASIN creation
+   - Same book from different indexers gets same ASIN
+   - Proper formatting (VIRTUAL-{12 hex chars})
+   - Normalization handling
+
+3. **Ranking Score Tests** - Validates scoring algorithms
+   - Exact matches score 100.0
+   - Best match thresholds (author >= 95, combined >= 75)
+   - No runtime-based popularity bias
+   - Timezone-aware datetime handling
+
+4. **Rate Limiting Tests** - Verifies API protection
+   - Max 5 concurrent Audible API calls
+   - Prevents 429 errors
+
+5. **Integration Tests** - Full search flow validation
+   - Available-only search mode
+   - Virtual book creation
+   - Duplicate prevention
+   - Google Books enrichment
+
+### Test Fixtures
+
+Test data is organized in `tests/fixtures/`:
+- `prowlarr_responses.json` - Mock Prowlarr search results
+- `audible_responses.json` - Mock Audible book metadata
+
+### Quick Verification
+
+To verify all fixes are working:
+
+```bash
+# Test author matching
+uv run pytest tests/test_prowlarr_search.py::TestAuthorMatching -v
+
+# Test virtual ASIN generation
+uv run pytest tests/test_prowlarr_search.py::TestVirtualASINGeneration -v
+
+# Test ranking scores
+uv run pytest tests/test_prowlarr_search.py::TestRankingScores -v
+
+# Test rate limiting
+uv run pytest tests/test_prowlarr_search.py::TestRateLimiting -v
+
+# Test integration
+uv run pytest tests/test_prowlarr_search.py::TestIntegration -v
+```
+
+### CI/CD Integration
+
+For GitHub Actions, add to `.github/workflows/test.yml`:
+
+```yaml
+name: Tests
+on: [push, pull_request]
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install uv
+        run: curl -LsSf https://astral.sh/uv/install.sh | sh
+      - name: Install dependencies
+        run: uv sync --group test
+      - name: Run tests
+        run: uv run pytest tests/ --cov=app
+```
+
 # Docs
 
 [Hugo](https://gohugo.io) is used to generate the docs page. It can be found in the `/docs` directory.

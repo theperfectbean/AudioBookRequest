@@ -69,12 +69,12 @@ class _AudnexusResponse(BaseModel):
 
     asin: str
     title: str
-    subtitle: str | None
-    authors: list[_Author]
-    narrators: list[_Author]
-    image: str | None
-    releaseDate: str
-    runtimeLengthMin: int
+    subtitle: str | None = None
+    authors: list[_Author] = []
+    narrators: list[_Author] = []
+    image: str | None = None
+    releaseDate: str = "2000-01-01"
+    runtimeLengthMin: int = 0
 
 
 async def _get_audnexus_book(
@@ -121,12 +121,12 @@ class _AudimetaResponse(BaseModel):
 
     asin: str
     title: str
-    subtitle: str | None
-    authors: list[_Author]
-    narrators: list[_Author]
-    imageUrl: str | None
-    releaseDate: str
-    lengthMinutes: int | None
+    subtitle: str | None = None
+    authors: list[_Author] = []
+    narrators: list[_Author] = []
+    imageUrl: str | None = None
+    releaseDate: str = "2000-01-01"
+    lengthMinutes: int | None = None
 
 
 async def _get_audimeta_book(
@@ -294,6 +294,91 @@ class _AudibleSearchResponse(BaseModel):
     products: list[_AsinObj]
 
 
+async def list_popular_books(
+    session: Session,
+    client_session: ClientSession,
+    num_results: int = 20,
+    page: int = 0,
+    audible_region: audible_region_type | None = None,
+) -> list[Audiobook]:
+    """
+    Fetches popular non-fiction, science, and technology books from Audible.
+    """
+    if audible_region is None:
+        audible_region = get_region_from_settings()
+
+    cache_key = CacheQuery(
+        query="__popular_scitech__",
+        num_results=num_results,
+        page=page,
+        audible_region=audible_region,
+    )
+    cache_result = search_cache.get(cache_key)
+
+    if cache_result and time.time() - cache_result.timestamp < REFETCH_TTL:
+        try:
+            for book in cache_result.value:
+                session.add(book)
+                session.refresh(book)
+            return cache_result.value
+        except InvalidRequestError:
+            pass
+
+    params = {
+        "num_results": num_results,
+        "products_sort_by": "BestSellers",
+        "keywords": "science",
+        "page": page,
+    }
+    base_url = (
+        f"https://api.audible{audible_regions[audible_region]}/1.0/catalog/products?"
+    )
+    url = base_url + urlencode(params)
+
+    try:
+        async with client_session.get(url) as response:
+            response.raise_for_status()
+            audible_response = _AudibleSearchResponse.model_validate(
+                await response.json()
+            )
+    except Exception as e:
+        logger.error(
+            "Exception while fetching popular books from Audible",
+            region=audible_region,
+            error=e,
+        )
+        return []
+
+    asins = set(asin_obj.asin for asin_obj in audible_response.products)
+    books = get_existing_books(session, asins)
+    for key in books.keys():
+        asins.remove(key)
+
+    coros = [get_book_by_asin(client_session, asin, audible_region) for asin in asins]
+    new_books = await asyncio.gather(*coros)
+    new_books = [b for b in new_books if b]
+
+    store_new_books(session, new_books)
+
+    for b in new_books:
+        books[b.asin] = b
+
+    ordered: list[Audiobook] = []
+    for asin_obj in audible_response.products:
+        book = books.get(asin_obj.asin)
+        if book:
+            ordered.append(book)
+
+    search_cache[cache_key] = CacheResult(
+        value=ordered,
+        timestamp=time.time(),
+    )
+
+    logger.info(f"📚 POPULAR BOOKS | Found {len(ordered)} books")
+
+    return ordered
+
+
 async def list_audible_books(
     session: Session,
     client_session: ClientSession,
@@ -347,12 +432,18 @@ async def list_audible_books(
     )
     url = base_url + urlencode(params)
 
+    logger.info(f"AUDIBLE API QUERY: query='{query}' region='{audible_region}' num_results={num_results} page={page}")
+    logger.info(f"AUDIBLE API URL: {url}")
+
     try:
         async with client_session.get(url) as response:
             response.raise_for_status()
             audible_response = _AudibleSearchResponse.model_validate(
                 await response.json()
             )
+            logger.info(f"AUDIBLE API RETURNED: {len(audible_response.products)} ASINs")
+            for idx, asin_obj in enumerate(audible_response.products[:5]):
+                logger.info(f"  [{idx+1}] ASIN: {asin_obj.asin}")
     except Exception as e:
         logger.error(
             "Exception while fetching search results from Audible",
@@ -388,6 +479,12 @@ async def list_audible_books(
         value=ordered,
         timestamp=time.time(),
     )
+
+    logger.info(
+        f"📚 AUDIBLE API RESULTS | Query: '{query}' | Found {len(ordered)} books"
+    )
+    for idx, book in enumerate(ordered[:5]):
+        logger.info(f"  [{idx+1}] '{book.title}' by {book.authors} | ASIN: {book.asin}")
 
     # clean up cache slightly
     for k in list(search_cache.keys()):

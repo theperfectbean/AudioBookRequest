@@ -12,6 +12,7 @@ from starlette.background import BackgroundTask
 
 from app.internal.auth.authentication import DetailedUser
 from app.internal.env_settings import Settings
+from app.internal.book_search import audible_regions, get_region_from_settings
 
 templates = Jinja2Blocks(
     env=Environment(
@@ -43,6 +44,8 @@ templates.env.globals["json_regexp"] = (
     r'^\{\s*(?:"[^"\\]*(?:\\.[^"\\]*)*"\s*:\s*"[^"\\]*(?:\\.[^"\\]*)*"\s*(?:,\s*"[^"\\]*(?:\\.[^"\\]*)*"\s*:\s*"[^"\\]*(?:\\.[^"\\]*)*"\s*)*)?\}$'
 )
 templates.env.globals["base_url"] = Settings().app.base_url.rstrip("/")
+templates.env.globals["regions"] = audible_regions
+templates.env.globals["selected_region"] = get_region_from_settings()
 
 with open("CHANGELOG.md", "r") as file:
     changelog_content = file.read()

@@ -50,6 +50,42 @@
           }
         }
       };
+
+      const onSearch = () => {
+        const searchInput = document.querySelector("#nav-search-input");
+        const regionSelect = document.querySelector("#nav-region-select");
+        const search_term = searchInput.value;
+        const region = regionSelect.value;
+
+        const searchBtn = document.getElementById("nav-search-btn");
+        const searchText = document.getElementById("nav-search-text");
+        const searchSpinner = document.getElementById("nav-search-spinner");
+
+        if (searchBtn) searchBtn.disabled = true;
+        if (searchText) searchText.style.display = "none";
+        if (searchSpinner) {
+          searchSpinner.style.display = "inline-block";
+          searchSpinner.classList.remove("hidden");
+        }
+
+        // Check if we're on the search page and if available_only is selected
+        const urlParams = new URLSearchParams(window.location.search);
+        const availableOnly = urlParams.get('available_only') === 'true';
+        
+        let baseUrl = `{{ base_url }}/search?q=${encodeURIComponent(search_term)}&region=${region}`;
+        if (availableOnly) {
+          baseUrl += '&available_only=true';
+        }
+        
+        window.location.href = baseUrl;
+      };
+
+      const onPageChange = page => {
+        const url = new URL(window.location);
+        url.searchParams.set("page", page);
+        window.location = url;
+      };
+
       const toggleTheme = () => {
         const theme = document.documentElement.getAttribute("data-theme");
 
@@ -112,7 +148,7 @@
     {% if not hide_navbar %}
     <header class="shadow-lg">
       <nav class="navbar">
-        <div class="flex-1">
+        <div class="flex-none">
           <a
             preload
             href="{{ base_url }}/"
@@ -125,13 +161,73 @@
             class="btn btn-ghost text-lg sm:hidden"
             >ABR</a
           >
+        </div>
+        <div class="flex-1 flex justify-center">
           <a
             preload
             href="{{ base_url }}/search"
-            class="btn btn-ghost btn-square"
+            class="btn btn-ghost btn-square sm:hidden"
             title="Search"
             >{% include "icons/search.html" %}</a
           >
+          <div class="hidden sm:block w-full max-w-md">
+            <form class="join w-full" onsubmit="onSearch(); return false;">
+              <input
+                id="nav-search-input"
+                name="q"
+                class="input input-bordered join-item flex-1 focus:z-10"
+                placeholder="Search books..."
+                value="{{ search_term or '' }}"
+                autocomplete="off"
+                list="search-suggestions"
+                hx-get="{{ base_url }}/search/suggestions?region={{ selected_region }}"
+                hx-target="#search-suggestions"
+                hx-swap="outerHTML"
+                hx-trigger="keyup changed delay:250ms"
+              />
+              {% block search_suggestions %}
+                <datalist id="search-suggestions">
+                  {% for suggestion in (suggestions or [])[:3] %}
+                    <option value="{{ suggestion }}"></option>
+                  {% endfor %}
+                </datalist>
+              {% endblock search_suggestions %}
+              <select
+                id="nav-region-select"
+                name="region"
+                style="min-width: 4rem; width: 4rem; padding-left: 0.5rem; padding-right: 0.5rem;"
+                class="select select-bordered join-item focus:z-10"
+              >
+                {% for reg_code in regions.keys() %}
+                <option
+                  value="{{ reg_code }}"
+                  {%
+                  if
+                  reg_code.__eq__(selected_region)
+                  %}selected="selected"
+                  {%
+                  endif
+                  %}
+                >
+                  {{ reg_code | upper }}
+                </option>
+                {% endfor %}
+              </select>
+              <button
+                id="nav-search-btn"
+                type="submit"
+                class="btn btn-primary join-item"
+              >
+                <span id="nav-search-text">{% include "icons/search.html" %}</span>
+                <span
+                  id="nav-search-spinner"
+                  class="loading loading-spinner hidden"
+                ></span>
+              </button>
+            </form>
+          </div>
+        </div>
+        <div class="flex-none flex items-center">
           <a
             preload
             href="{{ base_url }}/wishlist"
@@ -149,7 +245,6 @@
               {% include "icons/gift.html" %}
             </span>
           </a>
-        </div>
         <div class="flex-none flex pr-4">
           <button
             class="btn btn-ghost btn-square light-dark-toggle"

@@ -1,5 +1,6 @@
-# To dermine what is currently being queried:
+# To determine what is currently being queried:
 from contextlib import contextmanager
+from datetime import datetime
 from typing import Literal
 
 import pydantic
@@ -79,6 +80,11 @@ async def query_sources(
             )
 
         ranked = await rank_sources(session, client_session, sources, book)
+
+        book.prowlarr_count = len(ranked)
+        book.last_prowlarr_query = datetime.now()
+        session.add(book)
+        session.commit()
 
         # start download if requested
         if start_auto_download and not book.downloaded and len(ranked) > 0:

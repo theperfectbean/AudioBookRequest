@@ -36,6 +36,28 @@ class ApplicationSettings(BaseModel):
     init_root_username: str = ""
     init_root_password: str = ""
 
+    enable_metadata_enrichment: bool = True
+    """Enable metadata enrichment for virtual books using Google Books API"""
+
+    metadata_cache_expiry_days: int = 30
+    """Number of days to cache metadata enrichment results"""
+
+    google_books_api_key: str = ""
+    """Optional Google Books API key (works without key but has rate limits)"""
+
+    # Author Relevance Ranking Settings
+    enable_author_relevance_ranking: bool = True
+    """Enable author relevance ranking for search results (available_only mode only)"""
+
+    author_match_threshold: float = 70.0
+    """Minimum score to show in 'Best Matches' section (0-100)"""
+
+    author_relevance_strict_mode_default: bool = False
+    """Default state for strict author matching toggle"""
+
+    enable_secondary_scoring: bool = True
+    """Enable secondary scoring factors (title, recency, popularity)"""
+
     def get_force_login_type(self) -> LoginTypeEnum | None:
         if self.force_login_type.strip():
             try:
@@ -56,6 +78,7 @@ class Settings(BaseSettings):
         env_nested_delimiter="__",
         nested_model_default_partial_update=True,
         env_file=(".env.local", ".env"),
+        extra="ignore",
     )
 
     db: DBSettings = DBSettings()

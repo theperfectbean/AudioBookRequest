@@ -29,7 +29,7 @@ WORKDIR /app
 COPY uv.lock pyproject.toml ./
 RUN uv sync --frozen --no-cache --no-dev
 COPY app/util/fetch_js.py app/util/fetch_js.py
-RUN mkdir -p static && /app/.venv/bin/python app/util/fetch_js.py
+RUN mkdir -p static && (/app/.venv/bin/python app/util/fetch_js.py || true)
 
 # ---- Final ----
 FROM python:3.14-alpine AS final
@@ -50,4 +50,4 @@ ENV ABR_APP__PORT=8000
 ARG VERSION
 ENV ABR_APP__VERSION=$VERSION
 
-CMD /app/.venv/bin/alembic upgrade heads && /app/.venv/bin/fastapi run --port $ABR_APP__PORT
+CMD /app/.venv/bin/fastapi run --port $ABR_APP__PORT

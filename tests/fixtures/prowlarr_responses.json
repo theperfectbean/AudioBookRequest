@@ -1,0 +1,285 @@
+{
+  "test_cases": {
+    "exact_match": {
+      "prowlarr": {
+        "guid": "exact1",
+        "indexer_id": 1,
+        "indexer": "TestIndexer",
+        "title": "The Way of Kings",
+        "author": "Brandon Sanderson",
+        "size": 1024000000,
+        "publish_date": "2020-01-01T00:00:00+00:00",
+        "seeders": 10,
+        "leechers": 2,
+        "info_url": "http://example.com/exact1",
+        "freeleech": false,
+        "protocol": "torrent"
+      },
+      "audible": {
+        "asin": "B08G9PRS1K",
+        "title": "The Way of Kings",
+        "subtitle": "The Stormlight Archive, Book 1",
+        "authors": ["Brandon Sanderson"],
+        "narrators": ["Michael Kramer", "Kate Reading"],
+        "cover_image": "https://example.com/cover1.jpg",
+        "release_date": "2010-08-01T00:00:00+00:00",
+        "runtime_length_min": 1440
+      },
+      "expected_match": true
+    },
+    "unknown_author": {
+      "prowlarr": {
+        "guid": "unknown1",
+        "indexer_id": 2,
+        "indexer": "UnknownIndexer",
+        "title": "Mistborn",
+        "author": "Unknown",
+        "size": 512000000,
+        "publish_date": "2019-01-01T00:00:00+00:00",
+        "seeders": 5,
+        "leechers": 1,
+        "info_url": "http://example.com/unknown1",
+        "freeleech": false,
+        "protocol": "torrent"
+      },
+      "audible": {
+        "asin": "B006Q9FL8Y",
+        "title": "Mistborn: The Final Empire",
+        "subtitle": "Mistborn Saga, Book 1",
+        "authors": ["Brandon Sanderson"],
+        "narrators": ["Michael Kramer"],
+        "cover_image": "https://example.com/cover2.jpg",
+        "release_date": "2006-07-01T00:00:00+00:00",
+        "runtime_length_min": 960
+      },
+      "expected_match": true
+    },
+    "surname_collision": {
+      "prowlarr": {
+        "guid": "collision1",
+        "indexer_id": 3,
+        "indexer": "CollisionIndexer",
+        "title": "Some Book",
+        "author": "Robert Wright",
+        "size": 800000000,
+        "publish_date": "2020-06-01T00:00:00+00:00",
+        "seeders": 8,
+        "leechers": 3,
+        "info_url": "http://example.com/collision1",
+        "freeleech": false,
+        "protocol": "torrent"
+      },
+      "audible": {
+        "asin": "B07ABC5678",
+        "title": "Robert Salas: My Story",
+        "subtitle": "UFO encounters",
+        "authors": ["Robert Salas"],
+        "narrators": ["Robert Salas"],
+        "cover_image": "https://example.com/cover4.jpg",
+        "release_date": "2019-01-01T00:00:00+00:00",
+        "runtime_length_min": 500
+      },
+      "expected_match": false
+    },
+    "title_only_search": {
+      "prowlarr": {
+        "guid": "title1",
+        "indexer_id": 4,
+        "indexer": "TitleIndexer",
+        "title": "The Way of Kings",
+        "author": "Brandon Sanderson",
+        "size": 1024000000,
+        "publish_date": "2020-01-01T00:00:00+00:00",
+        "seeders": 10,
+        "leechers": 2,
+        "info_url": "http://example.com/title1",
+        "freeleech": false,
+        "protocol": "torrent"
+      },
+      "audible": {
+        "asin": "B08G9PRS1K",
+        "title": "The Way of Kings",
+        "subtitle": "The Stormlight Archive, Book 1",
+        "authors": ["Brandon Sanderson"],
+        "narrators": ["Michael Kramer", "Kate Reading"],
+        "cover_image": "https://example.com/cover1.jpg",
+        "release_date": "2010-08-01T00:00:00+00:00",
+        "runtime_length_min": 1440
+      },
+      "search_query": "The Way of Kings",
+      "expected_match": true
+    },
+    "multi_word_author": {
+      "prowlarr": {
+        "guid": "multi1",
+        "indexer_id": 5,
+        "indexer": "MultiIndexer",
+        "title": "Book Title",
+        "author": "Brandon Sanderson",
+        "size": 1000000,
+        "publish_date": "2020-01-01T00:00:00+00:00",
+        "seeders": 5,
+        "leechers": 0,
+        "info_url": "http://example.com/multi1",
+        "freeleech": false,
+        "protocol": "torrent"
+      },
+      "audible": {
+        "asin": "B012345678",
+        "title": "Book Title",
+        "authors": ["Brandon Sanderson"],
+        "narrators": ["Narrator"],
+        "cover_image": "https://example.com/cover5.jpg",
+        "release_date": "2020-01-01T00:00:00+00:00",
+        "runtime_length_min": 600
+      },
+      "expected_match": true
+    },
+    "single_word_author": {
+      "prowlarr": {
+        "guid": "single1",
+        "indexer_id": 6,
+        "indexer": "SingleIndexer",
+        "title": "Book Title",
+        "author": "Sanderson",
+        "size": 1000000,
+        "publish_date": "2020-01-01T00:00:00+00:00",
+        "seeders": 5,
+        "leechers": 0,
+        "info_url": "http://example.com/single1",
+        "freeleech": false,
+        "protocol": "torrent"
+      },
+      "audible": {
+        "asin": "B012345679",
+        "title": "Book Title",
+        "authors": ["Brandon Sanderson"],
+        "narrators": ["Narrator"],
+        "cover_image": "https://example.com/cover6.jpg",
+        "release_date": "2020-01-01T00:00:00+00:00",
+        "runtime_length_min": 600
+      },
+      "expected_match": true
+    },
+    "empty_author": {
+      "prowlarr": {
+        "guid": "empty1",
+        "indexer_id": 7,
+        "indexer": "EmptyIndexer",
+        "title": "Book Without Author",
+        "author": "",
+        "size": 1000000,
+        "publish_date": "2020-01-01T00:00:00+00:00",
+        "seeders": 5,
+        "leechers": 0,
+        "info_url": "http://example.com/empty1",
+        "freeleech": false,
+        "protocol": "torrent"
+      },
+      "audible": {
+        "asin": "B012345680",
+        "title": "Book Without Author",
+        "authors": ["Any Author"],
+        "narrators": ["Narrator"],
+        "cover_image": "https://example.com/cover7.jpg",
+        "release_date": "2020-01-01T00:00:00+00:00",
+        "runtime_length_min": 600
+      },
+      "expected_match": true
+    },
+    "special_characters": {
+      "prowlarr": {
+        "guid": "special1",
+        "indexer_id": 8,
+        "indexer": "SpecialIndexer",
+        "title": "Book: With [Special] Characters—And More",
+        "author": "J. R. R. Tolkien",
+        "size": 1000000,
+        "publish_date": "2020-01-01T00:00:00+00:00",
+        "seeders": 5,
+        "leechers": 0,
+        "info_url": "http://example.com/special1",
+        "freeleech": false,
+        "protocol": "torrent"
+      },
+      "audible": {
+        "asin": "B012345681",
+        "title": "Book With Special Characters And More",
+        "authors": ["J R R Tolkien"],
+        "narrators": ["Narrator"],
+        "cover_image": "https://example.com/cover8.jpg",
+        "release_date": "2020-01-01T00:00:00+00:00",
+        "runtime_length_min": 600
+      },
+      "expected_match": true
+    }
+  },
+  "virtual_asin_test_cases": {
+    "same_book_different_indexers": {
+      "books": [
+        {
+          "title": "The Way of Kings",
+          "author": "Brandon Sanderson",
+          "indexer_id": 1
+        },
+        {
+          "title": "The Way of Kings",
+          "author": "Brandon Sanderson",
+          "indexer_id": 2
+        },
+        {
+          "title": "The Way of Kings",
+          "author": "Brandon Sanderson",
+          "indexer_id": 3
+        }
+      ],
+      "expected_asin": "VIRTUAL-",
+      "should_be_identical": true
+    },
+    "different_titles_same_author": {
+      "books": [
+        {
+          "title": "Mistborn: The Final Empire",
+          "author": "Brandon Sanderson",
+          "indexer_id": 1
+        },
+        {
+          "title": "Mistborn: The Well of Ascension",
+          "author": "Brandon Sanderson",
+          "indexer_id": 2
+        }
+      ],
+      "should_be_different": true
+    },
+    "normalization_test": {
+      "books": [
+        {
+          "title": "the way of kings",
+          "author": "brandon sanderson",
+          "indexer_id": 1
+        },
+        {
+          "title": "The Way of Kings",
+          "author": "Brandon Sanderson",
+          "indexer_id": 2
+        }
+      ],
+      "should_be_identical": true
+    },
+    "subtitle_removal": {
+      "books": [
+        {
+          "title": "The Way of Kings: The Stormlight Archive, Book 1",
+          "author": "Brandon Sanderson",
+          "indexer_id": 1
+        },
+        {
+          "title": "The Way of Kings",
+          "author": "Brandon Sanderson",
+          "indexer_id": 2
+        }
+      ],
+      "should_be_identical": true
+    }
+  }
+}

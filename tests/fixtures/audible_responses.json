@@ -1,0 +1,103 @@
+{
+  "sample_books": [
+    {
+      "asin": "B08G9PRS1K",
+      "title": "The Way of Kings",
+      "subtitle": "The Stormlight Archive, Book 1",
+      "authors": ["Brandon Sanderson"],
+      "narrators": ["Michael Kramer", "Kate Reading"],
+      "cover_image": "https://example.com/cover1.jpg",
+      "release_date": "2010-08-01T00:00:00+00:00",
+      "runtime_length_min": 1440
+    },
+    {
+      "asin": "B006Q9FL8Y",
+      "title": "Mistborn: The Final Empire",
+      "subtitle": "Mistborn Saga, Book 1",
+      "authors": ["Brandon Sanderson"],
+      "narrators": ["Michael Kramer"],
+      "cover_image": "https://example.com/cover2.jpg",
+      "release_date": "2006-07-01T00:00:00+00:00",
+      "runtime_length_min": 960
+    },
+    {
+      "asin": "B07XYZ1234",
+      "title": "Robert Wright's Guide to Life",
+      "subtitle": "A philosophical journey",
+      "authors": ["Robert Wright"],
+      "narrators": ["Robert Wright"],
+      "cover_image": "https://example.com/cover3.jpg",
+      "release_date": "2020-01-01T00:00:00+00:00",
+      "runtime_length_min": 600
+    },
+    {
+      "asin": "B07ABC5678",
+      "title": "Robert Salas: My Story",
+      "subtitle": "UFO encounters",
+      "authors": ["Robert Salas"],
+      "narrators": ["Robert Salas"],
+      "cover_image": "https://example.com/cover4.jpg",
+      "release_date": "2019-01-01T00:00:00+00:00",
+      "runtime_length_min": 500
+    },
+    {
+      "asin": "B012345678",
+      "title": "Elantris",
+      "subtitle": "The Cosmere",
+      "authors": ["Brandon Sanderson"],
+      "narrators": ["Michael Kramer"],
+      "cover_image": "https://example.com/cover5.jpg",
+      "release_date": "2005-08-01T00:00:00+00:00",
+      "runtime_length_min": 1200
+    }
+  ],
+  "search_scenarios": {
+    "brandon_sanderson": {
+      "query": "Brandon Sanderson",
+      "expected_results": ["B08G9PRS1K", "B006Q9FL8Y", "B012345678"]
+    },
+    "mistborn": {
+      "query": "Mistborn",
+      "expected_results": ["B006Q9FL8Y"]
+    },
+    "robert_wright": {
+      "query": "Robert Wright",
+      "expected_results": ["B07XYZ1234"]
+    },
+    "robert_salas": {
+      "query": "Robert Salas",
+      "expected_results": ["B07ABC5678"]
+    },
+    "title_only": {
+      "query": "The Way of Kings",
+      "expected_results": ["B08G9PRS1K"]
+    }
+  },
+  "edge_cases": {
+    "special_characters": {
+      "title": "Book: With [Special] Chars—And More",
+      "author": "J. R. R. Tolkien",
+      "expected_asin": "VIRTUAL-"
+    },
+    "very_long_title": {
+      "title": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+      "author": "Some Author",
+      "expected_asin": "VIRTUAL-"
+    },
+    "empty_author": {
+      "title": "Book Without Author",
+      "author": "",
+      "expected_asin": "VIRTUAL-"
+    },
+    "multiple_authors": {
+      "title": "Collaborative Work",
+      "author": "Author One, Author Two",
+      "expected_asin": "VIRTUAL-"
+    },
+    "non_ascii": {
+      "title": "日本語の本",
+      "author": "著者名",
+      "expected_asin": "VIRTUAL-"
+    }
+  }
+}

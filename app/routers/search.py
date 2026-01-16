@@ -1,6 +1,5 @@
 import uuid
 from typing import Annotated
-
 from aiohttp import ClientSession
 from fastapi import (
     APIRouter,
@@ -13,7 +12,6 @@ from fastapi import (
     Security,
 )
 from sqlmodel import Session
-
 from app.internal.auth.authentication import ABRAuth, DetailedUser
 from app.internal.book_search import (
     audible_region_type,
@@ -45,7 +43,6 @@ from app.routers.api.requests import (
 
 router = APIRouter(prefix="/search")
 
-
 @router.get("")
 async def read_search(
     request: Request,
@@ -56,6 +53,7 @@ async def read_search(
     num_results: int = 20,
     page: int = 0,
     region: audible_region_type | None = None,
+    available_only: bool = True,
 ):
     if region is None:
         region = get_region_from_settings()
@@ -68,10 +66,9 @@ async def read_search(
             num_results=num_results,
             page=page,
             region=region,
+            available_only=available_only,
         )
-
         prowlarr_configured = prowlarr_config.is_valid(session)
-
         return template_response(
             "search.html",
             request,
@@ -85,13 +82,13 @@ async def read_search(
                 "auto_start_download": quality_config.get_auto_download(session)
                 and user.is_above(GroupEnum.trusted),
                 "prowlarr_configured": prowlarr_configured,
+                "available_only": available_only,
             },
         )
     except Exception as e:
         session.rollback()
         logger.exception("Error during search", error=e)
         raise HTTPException(status_code=500, detail="Internal server error") from e
-
 
 @router.get("/suggestions")
 async def search_suggestions(
@@ -109,7 +106,6 @@ async def search_suggestions(
         block_name="search_suggestions",
     )
 
-
 @router.post("/request/{asin}")
 async def add_request(
     request: Request,
@@ -122,6 +118,7 @@ async def add_request(
     region: Annotated[audible_region_type, Form()],
     user: Annotated[DetailedUser, Security(ABRAuth())],
     num_results: Annotated[int, Form()] = 20,
+    available_only: Annotated[bool, Form()] = True,
 ):
     try:
         await create_request(
@@ -138,7 +135,6 @@ async def add_request(
             username=user.username,
             asin=asin,
         )
-
     results = []
     if query:
         results = await search_books(
@@ -149,10 +145,9 @@ async def add_request(
             num_results=num_results,
             page=page,
             region=region,
+            available_only=available_only,
         )
-
     prowlarr_configured = prowlarr_config.is_valid(session)
-
     return template_response(
         "search.html",
         request,
@@ -166,10 +161,10 @@ async def add_request(
             "auto_start_download": quality_config.get_auto_download(session)
             and user.is_above(GroupEnum.trusted),
             "prowlarr_configured": prowlarr_configured,
+            "available_only": available_only,
         },
         block_name="book_results",
     )
-
 
 @router.delete("/request/{asin}")
 async def delete_request(
@@ -180,14 +175,12 @@ async def delete_request(
     downloaded: bool | None = None,
 ):
     await api_delete_request(asin, session, user)
-
     results = get_wishlist_results(
         session,
         None if user.is_admin() else user.username,
         "downloaded" if downloaded else "not_downloaded",
     )
     counts = get_wishlist_counts(session, user)
-
     return template_response(
         "wishlist_page/wishlist.html",
         request,
@@ -201,7 +194,6 @@ async def delete_request(
         block_name="book_wishlist",
     )
 
-
 @router.get("/manual")
 async def read_manual(
     request: Request,
@@ -212,12 +204,13 @@ async def read_manual(
     book = None
     if id:
         book = session.get(ManualBookRequest, id)
-
     auto_download = quality_config.get_auto_download(session)
     return template_response(
-        "manual.html", request, user, {"auto_download": auto_download, "book": book}
+        "manual.html",
+        request,
+        user,
+        {"auto_download": auto_download, "book": book}
     )
-
 
 @router.post("/manual")
 async def add_manual(
@@ -245,9 +238,7 @@ async def add_manual(
         await update_manual_request(id, req_body, session, user)
     else:
         await create_manual_request(req_body, session, background_task, user)
-
     auto_download = quality_config.get_auto_download(session)
-
     return template_response(
         "manual.html",
         request,
