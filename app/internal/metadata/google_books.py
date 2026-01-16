@@ -7,9 +7,10 @@ import re
 from datetime import datetime
 from typing import Dict, List, Optional
 
-from aiohttp import ClientSession
-from pydantic import BaseModel, Field
+from aiohttp import ClientSession, ClientError
+from pydantic import BaseModel, Field, ValidationError
 from sqlmodel import Session, select
+from sqlalchemy.exc import SQLAlchemyError
 
 from app.internal.env_settings import Settings
 from app.internal.models import Audiobook, MetadataCache
@@ -140,10 +141,38 @@ class GoogleBooksProvider:
             import json
             metadata_dict = json.loads(result.metadata_json)
             return EnrichedMetadata(**metadata_dict)
-            
-        except Exception as e:
-            logger.error(f"Error checking cache: {e}")
+
+        except (json.JSONDecodeError, KeyError) as e:
+            logger.error(
+                f"Error parsing cached metadata",
+                error=str(e),
+                error_type=type(e).__name__,
+                search_key=search_key
+            )
             return None
+        except ValidationError as e:
+            logger.error(
+                f"Cached metadata validation failed",
+                error=str(e),
+                search_key=search_key
+            )
+            return None
+        except SQLAlchemyError as e:
+            logger.error(
+                f"Database error checking cache",
+                error=str(e),
+                error_type=type(e).__name__,
+                search_key=search_key
+            )
+            # Re-raise database errors so they can be handled by caller
+            raise
+        except Exception as e:
+            logger.exception(
+                f"Unexpected error checking cache",
+                search_key=search_key
+            )
+            # Re-raise unexpected errors for visibility
+            raise
     
     async def store_cache(
         self, 
@@ -175,10 +204,30 @@ class GoogleBooksProvider:
             
             session.commit()
             logger.debug(f"Stored cache for {search_key}")
-            
-        except Exception as e:
-            logger.error(f"Error storing cache: {e}")
+
+        except TypeError as e:
+            logger.error(
+                f"Error serializing metadata to JSON",
+                error=str(e),
+                search_key=search_key
+            )
             session.rollback()
+        except SQLAlchemyError as e:
+            logger.error(
+                f"Database error storing cache",
+                error=str(e),
+                error_type=type(e).__name__,
+                search_key=search_key
+            )
+            session.rollback()
+        except Exception as e:
+            logger.exception(
+                f"Unexpected error storing cache",
+                search_key=search_key
+            )
+            session.rollback()
+            # Re-raise unexpected errors for visibility
+            raise
     
     async def search_books(
         self, 
@@ -210,10 +259,41 @@ class GoogleBooksProvider:
                 
                 data = await response.json()
                 return GoogleBooksResponse(**data)
-                
-        except Exception as e:
-            logger.error(f"Google Books API error: {e}", title=title, author=author)
+
+        except ClientError as e:
+            logger.error(
+                f"Google Books API HTTP error",
+                error=str(e),
+                error_type=type(e).__name__,
+                title=title,
+                author=author
+            )
             return None
+        except (json.JSONDecodeError, KeyError) as e:
+            logger.error(
+                f"Error parsing Google Books API response",
+                error=str(e),
+                error_type=type(e).__name__,
+                title=title,
+                author=author
+            )
+            return None
+        except ValidationError as e:
+            logger.error(
+                f"Google Books response validation failed",
+                error=str(e),
+                title=title,
+                author=author
+            )
+            return None
+        except Exception as e:
+            logger.exception(
+                f"Unexpected Google Books API error",
+                title=title,
+                author=author
+            )
+            # Re-raise unexpected errors for visibility
+            raise
     
     async def search_books_with_fallbacks(
         self,
@@ -253,8 +333,12 @@ class GoogleBooksProvider:
                     response_obj = GoogleBooksResponse(**data)
                     if response_obj.items:
                         return response_obj
-        except Exception as e:
-            logger.debug(f"Strategy 3 failed: {e}")
+        except (ClientError, json.JSONDecodeError, ValidationError) as e:
+            logger.debug(
+                f"Strategy 3 failed",
+                error=str(e),
+                error_type=type(e).__name__
+            )
         
         # Strategy 4: Broader search without quotes
         logger.debug(f"Google Books search strategy 4: Broader search")
@@ -271,8 +355,12 @@ class GoogleBooksProvider:
                     response_obj = GoogleBooksResponse(**data)
                     if response_obj.items:
                         return response_obj
-        except Exception as e:
-            logger.debug(f"Strategy 4 failed: {e}")
+        except (ClientError, json.JSONDecodeError, ValidationError) as e:
+            logger.debug(
+                f"Strategy 4 failed",
+                error=str(e),
+                error_type=type(e).__name__
+            )
         
         return None
     
