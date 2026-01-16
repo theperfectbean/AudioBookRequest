@@ -11,8 +11,26 @@ from app.internal.models import Audiobook, ProwlarrSource
 from app.internal.prowlarr.util import prowlarr_config
 from app.internal.ranking.quality import FileFormat
 
-# HACK: Disabled because it doesn't work well with ratelimiting
-# We instead completely rely on the title and size of the complete torrent
+# NOTE: Torrent inspection is disabled due to rate limiting issues
+# Quality extraction is currently based on title and size of the complete torrent
+#
+# Known Issues (documented for future investigation):
+# 1. Torrent inspection causes rate limiting when enabled
+#    - When ENABLE_TORRENT_INSPECTION=True, frequent torrent downloads trigger rate limits
+#    - Needs investigation of caching strategy or request throttling
+#
+# 2. Magnet URL parsing not implemented (line 107)
+#    - Currently only handles direct torrent file downloads
+#    - Magnet URLs could provide file information without downloading full torrent
+#    - Would require DHT/tracker query implementation
+#
+# 3. Torrent parsing reliability issues (line 141)
+#    - torrent_parser library occasionally fails on valid torrents
+#    - ValidationError and InvalidTorrentDataException are silently caught
+#    - May need alternative parsing library or error recovery logic
+#
+# Current behavior: Falls back to heuristic-based quality detection using title keywords
+# (mp3, flac, m4b, audiobook) and calculates bitrate from total size / runtime
 ENABLE_TORRENT_INSPECTION = False
 
 
@@ -104,8 +122,7 @@ async def extract_qualities(
         if data:
             return get_torrent_info(data, book_seconds)
 
-    # TODO: use the magnet url to fetch the file information
-
+    # Magnet URL parsing not implemented - see Known Issues at top of file
     file_format: FileFormat = "unknown"
     if "mp3" in source.title.lower():
         file_format = "mp3"
@@ -138,7 +155,7 @@ class _DecodedTorrent(BaseModel):
 
 def get_torrent_info(data: bytes, book_seconds: int) -> list[Quality]:
     try:
-        # TODO: correctly fix wrong torrent parsing
+        # Torrent parsing may fail - see Known Issues at top of file
         parsed = _DecodedTorrent.model_validate(
             tp.decode(data, hash_fields={"pieces": (1, False)})
         )

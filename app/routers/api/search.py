@@ -376,8 +376,8 @@ async def search_books(
                     )
                     return (fallback_book, p_result)
 
-            # Create semaphore to limit concurrent Audible API calls (max 20 at a time)
-            semaphore = asyncio.Semaphore(20)
+            # Create semaphore to limit concurrent Audible API calls (max 5 at a time)
+            semaphore = asyncio.Semaphore(5)
             
             # Create tasks for unique results and run them in parallel with rate limiting
             async def fetch_with_timeout(res, semaphore):

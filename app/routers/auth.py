@@ -1,6 +1,7 @@
 import base64
 import secrets
 import time
+from datetime import datetime
 from typing import Annotated, cast
 from urllib.parse import urlencode, urljoin
 
@@ -143,6 +144,11 @@ def login_access_token(
     if login_type == LoginTypeEnum.oidc and not user.root:
         raise ToastException("Not root admin", "error")
 
+    # Update last_login timestamp
+    user.last_login = datetime.now()
+    session.add(user)
+    session.commit()
+
     request.session["sub"] = form_data.username
     return Response(
         status_code=status.HTTP_200_OK, headers={"HX-Redirect": redirect_uri}
@@ -259,6 +265,9 @@ async def login_oidc(
             elif group.lower() == "untrusted":
                 user.group = GroupEnum.untrusted
                 break
+
+    # Update last_login timestamp
+    user.last_login = datetime.now()
 
     session.add(user)
     session.commit()

@@ -138,7 +138,6 @@ class GoogleBooksProvider:
                 return None
             
             # Parse cached metadata
-            import json
             metadata_dict = json.loads(result.metadata_json)
             return EnrichedMetadata(**metadata_dict)
 
@@ -407,62 +406,84 @@ class GoogleBooksProvider:
             return book
         
         # Not in cache, search API with fallback strategies
-        logger.info(f"🔍 Enriching virtual book: '{book.title}' by {book.authors[0]}")
-        response = await self.search_books_with_fallbacks(client_session, book.title, book.authors[0])
-        
-        if not response or not response.items:
-            logger.warning(f"❌ No Google Books results for '{book.title}' after all fallback strategies")
-            # Store empty result in cache to avoid repeated lookups
-            empty_metadata = EnrichedMetadata()
-            await self.store_cache(session, search_key, empty_metadata)
+        try:
+            logger.info(f"🔍 Enriching virtual book: '{book.title}' by {book.authors[0]}")
+            response = await self.search_books_with_fallbacks(client_session, book.title, book.authors[0])
+
+            if not response or not response.items:
+                logger.warning(f"❌ No Google Books results for '{book.title}' after all fallback strategies")
+                # Store empty result in cache to avoid repeated lookups
+                empty_metadata = EnrichedMetadata()
+                await self.store_cache(session, search_key, empty_metadata)
+                return book
+
+            # Use first result
+            best_match = response.items[0]
+            volume_info = best_match.volumeInfo
+
+            # Extract metadata
+            cover_image = self._get_best_cover(volume_info.imageLinks)
+            isbn = self._extract_isbn(volume_info)
+
+            # Log what we found
+            if volume_info.imageLinks:
+                logger.debug(f"Found cover art for '{book.title}': {volume_info.imageLinks}")
+            else:
+                logger.warning(f"No cover art found for '{book.title}' in Google Books response")
+
+            enriched = EnrichedMetadata(
+                cover_image=cover_image,
+                description=volume_info.description,
+                authors=volume_info.authors,
+                categories=volume_info.categories,
+                isbn=isbn,
+                rating=volume_info.averageRating,
+                rating_count=volume_info.ratingsCount,
+                page_count=volume_info.pageCount,
+                published_date=volume_info.publishedDate,
+            )
+
+            # Store in cache
+            await self.store_cache(session, search_key, enriched)
+
+            # Apply to book
+            if cover_image and not book.cover_image:
+                book.cover_image = cover_image
+                logger.info(f"✅ Added cover image for {book.asin}")
+
+            if volume_info.description:
+                # Store description in subtitle field
+                desc = volume_info.description
+                if len(desc) > 200:
+                    desc = desc[:197] + "..."
+                if not book.subtitle:
+                    book.subtitle = desc
+                    logger.debug(f"Added description for {book.asin}")
+
+            if volume_info.authors:
+                book.authors = volume_info.authors
+                logger.debug(f"Updated authors for {book.asin}")
+
+        except ClientError as e:
+            logger.error(
+                f"HTTP error during Google Books enrichment",
+                error=str(e),
+                error_type=type(e).__name__,
+                book_title=book.title,
+                book_asin=book.asin
+            )
+            # Return original book on HTTP error
             return book
-        
-        # Use first result
-        best_match = response.items[0]
-        volume_info = best_match.volumeInfo
-        
-        # Extract metadata
-        cover_image = self._get_best_cover(volume_info.imageLinks)
-        isbn = self._extract_isbn(volume_info)
-        
-        # Log what we found
-        if volume_info.imageLinks:
-            logger.debug(f"Found cover art for '{book.title}': {volume_info.imageLinks}")
-        else:
-            logger.warning(f"No cover art found for '{book.title}' in Google Books response")
-        
-        enriched = EnrichedMetadata(
-            cover_image=cover_image,
-            description=volume_info.description,
-            authors=volume_info.authors,
-            categories=volume_info.categories,
-            isbn=isbn,
-            rating=volume_info.averageRating,
-            rating_count=volume_info.ratingsCount,
-            page_count=volume_info.pageCount,
-            published_date=volume_info.publishedDate,
-        )
-        
-        # Store in cache
-        await self.store_cache(session, search_key, enriched)
-        
-        # Apply to book
-        if cover_image and not book.cover_image:
-            book.cover_image = cover_image
-            logger.info(f"✅ Added cover image for {book.asin}")
-        
-        if volume_info.description:
-            # Store description in subtitle field
-            desc = volume_info.description
-            if len(desc) > 200:
-                desc = desc[:197] + "..."
-            if not book.subtitle:
-                book.subtitle = desc
-                logger.debug(f"Added description for {book.asin}")
-        
-        if volume_info.authors:
-            book.authors = volume_info.authors
-            logger.debug(f"Updated authors for {book.asin}")
+        except (ValidationError, KeyError, AttributeError) as e:
+            logger.error(
+                f"Data validation error during Google Books enrichment",
+                error=str(e),
+                error_type=type(e).__name__,
+                book_title=book.title,
+                book_asin=book.asin
+            )
+            # Return original book on validation error
+            return book
         
         logger.info(f"✅ Enriched virtual book: {book.asin}")
         return book

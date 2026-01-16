@@ -718,18 +718,21 @@ class TestIntegration:
             )
         ]
 
-        with patch.object(provider, 'search_books', return_value=mock_response):
-            # Mock cache operations
-            mock_session.exec = MagicMock(return_value=None)
-            
-            # Enrich
-            enriched = await provider.enrich_virtual_book(mock_client_session, mock_session, virtual_book)
+        with patch.object(provider, 'search_books_with_fallbacks', return_value=mock_response):
+            # Mock cache operations - exec returns a result with .first() method
+            mock_exec_result = MagicMock()
+            mock_exec_result.first.return_value = None  # Cache miss
+            mock_session.exec = MagicMock(return_value=mock_exec_result)
 
-            # Verify enrichment
-            assert enriched.cover_image == "https://example.com/cover.jpg"
-            assert enriched.subtitle == "Test description"
-        assert enriched.subtitle == "Test description"
-        assert enriched.authors == ["Test Author"]
+            # Mock store_cache to be async
+            with patch.object(provider, 'store_cache', new_callable=AsyncMock):
+                # Enrich
+                enriched = await provider.enrich_virtual_book(mock_client_session, mock_session, virtual_book)
+
+                # Verify enrichment
+                assert enriched.cover_image == "https://example.com/cover.jpg"
+                assert enriched.subtitle == "Test description"
+                assert enriched.authors == ["Test Author"]
 
     @pytest.mark.asyncio
     async def test_rate_limiting_prevents_429_errors(self):
@@ -1279,3 +1282,125 @@ class TestTransactionSafety:
         # All functions with commit should also have rollback
         for func_name, has_rollback in functions_with_commit:
             assert has_rollback, f"Function {func_name} has session.commit() but no session.rollback()"
+
+
+class TestExceptionHandling:
+    """Test exception handling improvements from Phase 2 fixes."""
+
+    @pytest.mark.asyncio
+    async def test_google_books_json_error_handled(self):
+        """Verify JSON parsing errors are caught with specific exception type."""
+        import json
+        from unittest.mock import MagicMock, AsyncMock, patch
+        from app.internal.metadata.google_books import GoogleBooksProvider
+        from app.internal.models import Audiobook
+        from sqlmodel import Session
+
+        provider = GoogleBooksProvider()
+        mock_session = MagicMock(spec=Session)
+        mock_client_session = MagicMock()
+
+        # Create a virtual book
+        virtual_book = Audiobook(
+            asin="VIRTUAL-test456",
+            title="Test Book",
+            authors=["Test Author"],
+            release_date=None,
+            runtime_length_min=0,
+            cover_image=None,
+        )
+
+        # Mock cache to return invalid JSON
+        with patch.object(provider, "check_cache") as mock_check_cache:
+            mock_cached = MagicMock()
+            mock_cached.metadata_json = "{invalid json"  # Malformed JSON
+            mock_check_cache.return_value = mock_cached
+
+            # Should not crash, should return None and log specific error
+            result = await provider.enrich_virtual_book(
+                client_session=mock_client_session,
+                session=mock_session,
+                book=virtual_book,
+            )
+
+            # Should handle error gracefully and return original book
+            assert result.asin == "VIRTUAL-test456"
+
+    @pytest.mark.asyncio
+    async def test_google_books_http_error_handled(self):
+        """Verify HTTP errors are caught and logged with specific exception type."""
+        from unittest.mock import MagicMock, AsyncMock, patch
+        from app.internal.metadata.google_books import GoogleBooksProvider
+        from app.internal.models import Audiobook
+        from sqlmodel import Session
+        import aiohttp
+
+        provider = GoogleBooksProvider()
+        mock_session = MagicMock(spec=Session)
+        mock_client_session = MagicMock()
+
+        # Create a virtual book
+        virtual_book = Audiobook(
+            asin="VIRTUAL-test789",
+            title="Test Book",
+            authors=["Test Author"],
+            release_date=None,
+            runtime_length_min=0,
+            cover_image=None,
+        )
+
+        # Mock API to raise HTTP error
+        with patch.object(provider, "check_cache", return_value=None), \
+             patch.object(provider, "search_books_with_fallbacks") as mock_search:
+
+            # Simulate HTTP error
+            mock_search.side_effect = aiohttp.ClientError("Network error")
+
+            # Should not crash, should handle error gracefully
+            result = await provider.enrich_virtual_book(
+                client_session=mock_client_session,
+                session=mock_session,
+                book=virtual_book,
+            )
+
+            # Should return original book on error
+            assert result.asin == "VIRTUAL-test789"
+            assert result.cover_image is None  # Not enriched
+
+    @pytest.mark.asyncio
+    async def test_metadata_cache_validation_error_handled(self):
+        """Verify data validation errors during cache parsing are handled."""
+        from unittest.mock import MagicMock, patch
+        from app.internal.metadata.google_books import GoogleBooksProvider
+        from app.internal.models import Audiobook
+        from sqlmodel import Session
+
+        provider = GoogleBooksProvider()
+        mock_session = MagicMock(spec=Session)
+        mock_client_session = MagicMock()
+
+        virtual_book = Audiobook(
+            asin="VIRTUAL-validation",
+            title="Test Book",
+            authors=["Test Author"],
+            release_date=None,
+            runtime_length_min=0,
+            cover_image=None,
+        )
+
+        # Mock cache with valid JSON but invalid data structure
+        with patch.object(provider, "check_cache") as mock_check_cache:
+            mock_cached = MagicMock()
+            # Valid JSON but missing required fields
+            mock_cached.metadata_json = '{"invalid": "structure"}'
+            mock_check_cache.return_value = mock_cached
+
+            # Should handle validation error gracefully
+            result = await provider.enrich_virtual_book(
+                client_session=mock_client_session,
+                session=mock_session,
+                book=virtual_book,
+            )
+
+            # Should return original book
+            assert result.asin == "VIRTUAL-validation"

@@ -61,7 +61,8 @@ class QualityProfile(StringConfigCache[QualityConfigKey]):
     _default_min_seeders = 2
 
     def reset_all(self, session: Session):
-        # TODO: find a way so values don't have to be repeated here
+        # NOTE: Keys are manually listed here to ensure type safety
+        # Could use get_type_hints() or Literal extraction but adds complexity
         keys: list[QualityConfigKey] = [
             "quality_flac",
             "quality_m4b",

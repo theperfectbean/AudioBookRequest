@@ -30,11 +30,13 @@ class User(BaseSQLModel, table=True):
     )
     root: bool = False
     extra_data: str | None = None
-
-    # TODO: Add last_login
-    # last_login: datetime = Field(
-    #     default_factory=datetime.now, sa_column_kwargs={"server_default": "now()"}
-    # )
+    last_login: datetime | None = Field(
+        default=None,
+        sa_column=Column(
+            type_=DateTime,
+            nullable=True,
+        ),
+    )
 
     """
     untrusted: Requests need to be manually reviewed

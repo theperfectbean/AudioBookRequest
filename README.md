@@ -132,6 +132,25 @@ In the case of an OIDC misconfiguration, i.e. changing a setting like your clien
 | `ABR_DB__POSTGRES_PASSWORD`   | Password of the postgres database.                                                                                                                                                                                                                           | password         |
 | `ABR_DB__POSTGRES_SSL_MODE`   | [SSL mode](https://www.postgresql.org/docs/18/libpq-connect.html#LIBPQ-CONNECT-SSLMODE) to use for the postgres instance.                                                                                                                                    | prefer           |
 
+#### Metadata Enrichment
+
+| ENV                                      | Description                                                                                                         | Default |
+| ---------------------------------------- | ------------------------------------------------------------------------------------------------------------------- | ------- |
+| `ABR_APP__ENABLE_METADATA_ENRICHMENT`    | Enable metadata enrichment for virtual books using Google Books API.                                                | true    |
+| `ABR_APP__METADATA_CACHE_EXPIRY_DAYS`    | Number of days to cache metadata enrichment results before refreshing.                                              | 30      |
+| `ABR_APP__GOOGLE_BOOKS_API_KEY`          | Optional Google Books API key. Works without key but has rate limits. Get one at https://console.cloud.google.com/apis/credentials | (empty) |
+
+#### Author Relevance Ranking
+
+These settings control the author matching and ranking behavior when searching in "available_only" mode (Prowlarr integration).
+
+| ENV                                         | Description                                                                                                         | Default |
+| ------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- | ------- |
+| `ABR_APP__ENABLE_AUTHOR_RELEVANCE_RANKING`  | Enable author relevance ranking for search results in available_only mode.                                          | true    |
+| `ABR_APP__AUTHOR_MATCH_THRESHOLD`           | Minimum score (0-100) for a result to appear in the 'Best Matches' section. Higher values are more strict.          | 70.0    |
+| `ABR_APP__AUTHOR_RELEVANCE_STRICT_MODE_DEFAULT` | Default state for the strict author matching toggle in the UI. When enabled, requires higher author match scores.   | false   |
+| `ABR_APP__ENABLE_SECONDARY_SCORING`         | Enable secondary scoring factors (title similarity, recency, popularity) in addition to author matching.             | true    |
+
 ---
 
 # Contributing
