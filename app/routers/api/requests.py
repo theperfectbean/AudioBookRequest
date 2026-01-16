@@ -1,4 +1,3 @@
-import uuid
 from typing import Annotated, Literal
 
 from aiohttp import ClientSession
@@ -11,7 +10,8 @@ from fastapi import (
     Response,
 )
 from pydantic import BaseModel
-from sqlmodel import Session, asc, col, select, delete
+from sqlalchemy.exc import IntegrityError
+from sqlmodel import Session, col, select, delete
 
 from app.internal.auth.authentication import APIKeyAuth, DetailedUser
 from app.internal.book_search import (
@@ -26,11 +26,9 @@ from app.internal.models import (
     AudiobookWishlistResult,
     EventEnum,
     GroupEnum,
-    ManualBookRequest,
     User,
 )
 from app.internal.notifications import (
-    send_all_manual_notifications,
     send_all_notifications,
 )
 from app.internal.prowlarr.prowlarr import start_download
@@ -87,6 +85,10 @@ async def create_request(
         except HTTPException:
             session.rollback()
             raise
+        except IntegrityError:
+            session.rollback()
+            logger.info("Duplicate request detected", username=user.username, asin=asin)
+            raise HTTPException(status_code=409, detail="Book already requested")
         except Exception as e:
             session.rollback()
             logger.exception("Failed to add audiobook request", username=user.username, asin=asin, error=e)
@@ -182,151 +184,6 @@ async def mark_downloaded(
             logger.exception("Failed to mark book as downloaded", asin=asin, error=e)
             raise HTTPException(status_code=500, detail="Failed to mark book as downloaded")
     raise HTTPException(status_code=404, detail="Book not found")
-
-
-@router.get("/manual", response_model=list[ManualBookRequest])
-async def list_manual_requests(
-    session: Annotated[Session, Depends(get_session)],
-    user: Annotated[DetailedUser, Security(APIKeyAuth())],
-):
-    return session.exec(
-        select(ManualBookRequest)
-        .where(
-            user.is_admin() or ManualBookRequest.user_username == user.username,
-            col(ManualBookRequest.user_username).is_not(None),
-        )
-        .order_by(asc(ManualBookRequest.downloaded))
-    ).all()
-
-
-class ManualRequest(BaseModel):
-    title: str
-    author: str
-    narrator: str | None = None
-    subtitle: str | None = None
-    publish_date: str | None = None
-    info: str | None = None
-
-
-@router.post("/manual", status_code=201)
-async def create_manual_request(
-    body: ManualRequest,
-    session: Annotated[Session, Depends(get_session)],
-    background_task: BackgroundTasks,
-    user: Annotated[DetailedUser, Security(APIKeyAuth())],
-):
-    try:
-        book_request = ManualBookRequest(
-            user_username=user.username,
-            title=body.title,
-            authors=body.author.split(","),
-            narrators=body.narrator.split(",") if body.narrator else [],
-            subtitle=body.subtitle,
-            publish_date=body.publish_date,
-            additional_info=body.info,
-        )
-        session.add(book_request)
-        session.commit()
-
-        background_task.add_task(
-            send_all_manual_notifications,
-            event_type=EventEnum.on_new_request,
-            book_request=ManualBookRequest.model_validate(book_request),
-        )
-        return Response(status_code=201)
-    except HTTPException:
-        session.rollback()
-        raise
-    except Exception as e:
-        session.rollback()
-        logger.exception("Failed to create manual book request", username=user.username, title=body.title, error=e)
-        raise HTTPException(status_code=500, detail="Failed to create manual request")
-
-
-@router.put("/manual/{id}", status_code=204)
-async def update_manual_request(
-    id: uuid.UUID,
-    body: ManualRequest,
-    session: Annotated[Session, Depends(get_session)],
-    user: Annotated[DetailedUser, Security(APIKeyAuth())],
-):
-    book_request = session.get(ManualBookRequest, id)
-    if not book_request:
-        raise HTTPException(status_code=404, detail="Book request not found")
-
-    if not user.is_admin() and book_request.user_username != user.username:
-        raise HTTPException(status_code=403, detail="Not authorized")
-
-    try:
-        book_request.title = body.title
-        book_request.subtitle = body.subtitle
-        book_request.authors = body.author.split(",")
-        book_request.narrators = body.narrator.split(",") if body.narrator else []
-        book_request.publish_date = body.publish_date
-        book_request.additional_info = body.info
-
-        session.add(book_request)
-        session.commit()
-        return Response(status_code=204)
-    except HTTPException:
-        session.rollback()
-        raise
-    except Exception as e:
-        session.rollback()
-        logger.exception("Failed to update manual book request", id=str(id), username=user.username, error=e)
-        raise HTTPException(status_code=500, detail="Failed to update manual request")
-
-
-@router.patch("/manual/{id}/downloaded")
-async def mark_manual_downloaded(
-    id: uuid.UUID,
-    session: Annotated[Session, Depends(get_session)],
-    background_task: BackgroundTasks,
-    _: Annotated[DetailedUser, Security(APIKeyAuth(GroupEnum.admin))],
-):
-    book_request = session.get(ManualBookRequest, id)
-    if book_request:
-        try:
-            book_request.downloaded = True
-            session.add(book_request)
-            session.commit()
-
-            background_task.add_task(
-                send_all_manual_notifications,
-                event_type=EventEnum.on_successful_download,
-                book_request=ManualBookRequest.model_validate(book_request),
-            )
-            return Response(status_code=204)
-        except HTTPException:
-            session.rollback()
-            raise
-        except Exception as e:
-            session.rollback()
-            logger.exception("Failed to mark manual request as downloaded", id=str(id), error=e)
-            raise HTTPException(status_code=500, detail="Failed to mark request as downloaded")
-    raise HTTPException(status_code=404, detail="Request not found")
-
-
-@router.delete("/manual/{id}")
-async def delete_manual_request(
-    id: uuid.UUID,
-    session: Annotated[Session, Depends(get_session)],
-    _: Annotated[DetailedUser, Security(APIKeyAuth(GroupEnum.admin))],
-):
-    book = session.get(ManualBookRequest, id)
-    if book:
-        try:
-            session.delete(book)
-            session.commit()
-            return Response(status_code=204)
-        except HTTPException:
-            session.rollback()
-            raise
-        except Exception as e:
-            session.rollback()
-            logger.exception("Failed to delete manual book request", id=str(id), error=e)
-            raise HTTPException(status_code=500, detail="Failed to delete manual request")
-    raise HTTPException(status_code=404, detail="Request not found")
 
 
 @router.post(

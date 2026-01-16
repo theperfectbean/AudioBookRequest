@@ -1,9 +1,12 @@
 import asyncio
 import hashlib
 import re
+import time
+from contextlib import asynccontextmanager
 from typing import Annotated, Optional, List
 from aiohttp import ClientSession
 from fastapi import APIRouter, Depends, HTTPException, Query, Security
+from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, select
 
 from app.internal import book_search
@@ -30,8 +33,26 @@ from app.util.db import get_session
 from app.util.log import logger
 from app.util.author_matcher import rank_search_results
 from app.internal.models import RankedAudiobookSearchResult
+from app.util.cache import SimpleCache
 
 router = APIRouter(prefix="/search", tags=["Search"])
+
+# Cache for virtual book upgrade attempts: (real_asin or None, virtual_asin)
+upgrade_attempt_cache: SimpleCache[Optional[str], str] = SimpleCache()
+
+# Cache for ranking results: (ranked_results, cache_key)
+ranking_cache: SimpleCache[list[RankedAudiobookSearchResult], str] = SimpleCache()
+
+
+@asynccontextmanager
+async def timing_context(operation: str):
+    """Context manager for timing operations"""
+    start = time.perf_counter()
+    try:
+        yield
+    finally:
+        duration = time.perf_counter() - start
+        logger.info(f"⏱️ {operation} took {duration:.2f}s")
 
 
 def generate_virtual_asin(title: str, author: str) -> str:
@@ -48,6 +69,20 @@ def generate_virtual_asin(title: str, author: str) -> str:
     stable_hash = hashlib.sha256(hash_input.encode()).hexdigest()[:11]
     
     return f"VIRTUAL-{stable_hash}"
+
+
+def generate_ranking_cache_key(books: list[Audiobook], query: str, settings) -> str:
+    """Generate stable cache key for ranking results"""
+    import json
+    from hashlib import sha256
+
+    # Use ASINs (sorted) + query + settings hash
+    asin_hash = sha256(
+        json.dumps([b.asin for b in books], sort_keys=True).encode()
+    ).hexdigest()[:16]
+    query_hash = sha256(query.encode()).hexdigest()[:16]
+    settings_hash = f"{settings.app.author_match_threshold}_{settings.app.enable_secondary_scoring}"
+    return f"{query_hash}:{asin_hash}:{settings_hash}"
 
 
 def extract_asin_from_prowlarr(p_result: ProwlarrSearchResult) -> Optional[str]:
@@ -206,6 +241,52 @@ async def check_and_upgrade_virtual_book(
     return None
 
 
+async def check_and_upgrade_virtual_book_cached(
+    session: Session,
+    client_session: ClientSession,
+    p_result: ProwlarrSearchResult,
+    region: str,
+) -> Optional[Audiobook]:
+    """
+    Cached wrapper for check_and_upgrade_virtual_book to avoid redundant upgrade checks.
+    """
+    settings = Settings()
+    virtual_asin = generate_virtual_asin(p_result.title, p_result.author)
+
+    # Check cache first
+    cached_result = upgrade_attempt_cache.get(
+        settings.app.upgrade_attempt_cache_ttl, virtual_asin
+    )
+    if cached_result is not None:
+        if cached_result == "":  # Failed upgrade cached
+            logger.debug(f"Cached upgrade failure for {virtual_asin}")
+            existing = session.exec(
+                select(Audiobook).where(Audiobook.asin == virtual_asin)
+            ).first()
+            return existing
+        else:  # Successful upgrade cached
+            logger.debug(f"Cached upgrade success for {virtual_asin} → {cached_result}")
+            # Return the real book by ASIN
+            real_book = await get_book_by_asin(client_session, cached_result, region)
+            if real_book:
+                return real_book
+            # If real book not found (unlikely), fall through to try upgrade again
+
+    # Not cached, perform upgrade check
+    result = await check_and_upgrade_virtual_book(
+        session, client_session, p_result, region
+    )
+
+    # Cache result
+    if result:
+        if result.asin.startswith("VIRTUAL-"):
+            upgrade_attempt_cache.set("", virtual_asin)  # Failed
+        else:
+            upgrade_attempt_cache.set(result.asin, virtual_asin)  # Succeeded
+
+    return result
+
+
 @router.get("", response_model=list[AudiobookSearchResult])
 async def search_books(
     client_session: Annotated[ClientSession, Depends(get_connection)],
@@ -230,12 +311,13 @@ async def search_books(
         if available_only:
             # Availability-first search mode
             # First search Prowlarr for available books
-            prowlarr_results = await search_prowlarr_available(
-                session=session,
-                client_session=client_session,
-                query=query,
-                limit=num_results,
-            )
+            async with timing_context("Prowlarr search"):
+                prowlarr_results = await search_prowlarr_available(
+                    session=session,
+                    client_session=client_session,
+                    query=query,
+                    limit=num_results,
+                )
 
             # De-duplicate Prowlarr results by title/author to avoid redundant parallel DB operations
             unique_prowlarr_results: dict[str, ProwlarrSearchResult] = {}
@@ -280,9 +362,9 @@ async def search_books(
                         f"Prowlarr: '{p_result.title}' by '{p_result.author}' | "
                         f"GUID: {p_result.guid}"
                     )
-                    
+
                     # Step 0: Check if we have an existing virtual book that can be upgraded
-                    existing_upgraded = await check_and_upgrade_virtual_book(
+                    existing_upgraded = await check_and_upgrade_virtual_book_cached(
                         session, client_session, p_result, region
                     )
                     if existing_upgraded:
@@ -306,58 +388,57 @@ async def search_books(
                             )
                             return (book, p_result)
                     
-                    # Step 2: Try enhanced search strategies
+                    # Step 2: Try enhanced search strategies in parallel
                     strategies = [
                         ("title + author", f"{p_result.title} {p_result.author}"),
                         ("primary title only", normalize_text(p_result.title, primary_only=True)),
                         ("quoted title + author", f'"{p_result.title}" {p_result.author}'),
                     ]
-                    
-                    # Try each strategy
-                    for idx, (strategy_name, search_query) in enumerate(strategies):
-                        logger.debug(f"  Trying strategy {idx+1}: {strategy_name} → '{search_query}'")
-                        
-                        potential_matches = await list_audible_books(
-                            session=session,
-                            client_session=client_session,
-                            query=search_query,
-                            num_results=10,
-                            audible_region=region,
-                        )
-                        
-                        logger.debug(f"  Found {len(potential_matches)} potential matches")
-                        
-                        # Try strict matching first
-                        for a_result in potential_matches:
-                            if verify_match(p_result, a_result, search_query=original_query):
-                                logger.info(
-                                    f"✅ VERIFIED MATCH ({strategy_name}) | "
-                                    f"Prowlarr: '{p_result.title}' by '{p_result.author}' | "
-                                    f"Audible: '{a_result.title}' by {a_result.authors}"
-                                )
-                                return (a_result, p_result)
-                    
-                    # Step 3: Try relaxed matching on first strategy results
-                    logger.debug("  Trying relaxed matching on first strategy")
-                    first_strategy_query = strategies[0][1]
-                    potential_matches = await list_audible_books(
-                        session=session,
-                        client_session=client_session,
-                        query=first_strategy_query,
-                        num_results=10,
-                        audible_region=region,
-                    )
-                    
-                    for a_result in potential_matches:
-                        if verify_match_relaxed(p_result, a_result, search_query=original_query):
-                            logger.warning(
-                                f"⚠️ RELAXED MATCH | "
-                                f"Prowlarr: '{p_result.title}' by '{p_result.author}' | "
-                                f"Audible: '{a_result.title}' by {a_result.authors}"
+
+                    # Helper function to try a single strategy
+                    async def try_strategy(
+                        strategy_name: str, search_query: str, strict: bool = True
+                    ) -> tuple[Audiobook, ProwlarrSearchResult] | None:
+                        try:
+                            potential_matches = await list_audible_books(
+                                session=session,
+                                client_session=client_session,
+                                query=search_query,
+                                num_results=10,
+                                audible_region=region,
                             )
-                            return (a_result, p_result)
-                    
-                    # Step 4: No match found - create virtual book
+
+                            verify_fn = verify_match if strict else verify_match_relaxed
+                            for a_result in potential_matches:
+                                if verify_fn(p_result, a_result, search_query=original_query):
+                                    logger.info(
+                                        f"✅ {'VERIFIED' if strict else 'RELAXED'} MATCH ({strategy_name}) | "
+                                        f"Prowlarr: '{p_result.title}' by '{p_result.author}' | "
+                                        f"Audible: '{a_result.title}' by {a_result.authors}"
+                                    )
+                                    return (a_result, p_result)
+                        except Exception as e:
+                            logger.warning(f"Strategy {strategy_name} failed: {e}")
+                        return None
+
+                    # Create tasks for all strategies (strict + relaxed fallback)
+                    tasks = []
+                    for strategy_name, search_query in strategies:
+                        tasks.append(try_strategy(strategy_name, search_query, strict=True))
+                    # Add relaxed strategy as fallback
+                    tasks.append(try_strategy("relaxed", strategies[0][1], strict=False))
+
+                    # Return first successful match
+                    for coro in asyncio.as_completed(tasks):
+                        result = await coro
+                        if result:
+                            # Cancel remaining tasks
+                            for task in tasks:
+                                if isinstance(task, asyncio.Task) and not task.done():
+                                    task.cancel()
+                            return result
+
+                    # Step 3: No match found - create virtual book
                     fallback_asin = generate_virtual_asin(p_result.title, p_result.author)
                     fallback_book = Audiobook(
                         asin=fallback_asin,
@@ -376,8 +457,9 @@ async def search_books(
                     )
                     return (fallback_book, p_result)
 
-            # Create semaphore to limit concurrent Audible API calls (max 5 at a time)
-            semaphore = asyncio.Semaphore(5)
+            # Create semaphore to limit concurrent Audible API calls
+            settings = Settings()
+            semaphore = asyncio.Semaphore(settings.app.max_concurrent_audible_requests)
             
             # Create tasks for unique results and run them in parallel with rate limiting
             async def fetch_with_timeout(res, semaphore):
@@ -406,7 +488,8 @@ async def search_books(
                     return (fallback_book, res)
             
             tasks = [fetch_with_timeout(res, semaphore) for res in unique_prowlarr_results.values()]
-            parallel_results = await asyncio.gather(*tasks, return_exceptions=True)
+            async with timing_context("Parallel fetch & verify"):
+                parallel_results = await asyncio.gather(*tasks, return_exceptions=True)
 
             for item in parallel_results:
                 if isinstance(item, Exception):
@@ -442,19 +525,20 @@ async def search_books(
                 virtual_books = [b for b in results if b.asin.startswith("VIRTUAL-")]
                 virtual_book_count = len(virtual_books)
                 logger.info(f"📚 Starting metadata enrichment for {virtual_book_count} virtual books")
-                
+
                 if virtual_book_count > 0:
-                    # Parallel enrichment using asyncio.gather
-                    enrichment_tasks = [
-                        google_books_provider.enrich_virtual_book(
-                            client_session=client_session,
-                            session=session,
-                            book=book,
-                        )
-                        for book in virtual_books
-                    ]
-                    
-                    enriched_books = await asyncio.gather(*enrichment_tasks, return_exceptions=True)
+                    async with timing_context("Metadata enrichment"):
+                        # Parallel enrichment using asyncio.gather
+                        enrichment_tasks = [
+                            google_books_provider.enrich_virtual_book(
+                                client_session=client_session,
+                                session=session,
+                                book=book,
+                            )
+                            for book in virtual_books
+                        ]
+
+                        enriched_books = await asyncio.gather(*enrichment_tasks, return_exceptions=True)
 
                     # Build results map with enriched books and persist to database
                     results_map = {}
@@ -491,6 +575,16 @@ async def search_books(
                         logger.info(
                             f"✅ Enrichment complete: {successful} successful, {failed} failed, changes persisted to database"
                         )
+                    except IntegrityError as e:
+                        session.rollback()
+                        logger.warning(
+                            f"Duplicate ASIN detected during enrichment merge, rolled back",
+                            error=str(e),
+                            successful=successful,
+                            failed=failed
+                        )
+                        # Continue with enriched books in memory (not persisted)
+                        logger.info("Continuing with non-persisted enrichment in search results")
                     except Exception as e:
                         session.rollback()
                         logger.error(
@@ -527,19 +621,28 @@ async def search_books(
 
     # Apply author relevance ranking for available_only searches
     settings = Settings()
-    if (available_only and query and results and 
+    if (available_only and query and results and
         settings.app.enable_author_relevance_ranking):
-        
+
         logger.info(f"🎯 Applying author relevance ranking for {len(results)} results")
-        
+
+        # Check cache first
+        cache_key = generate_ranking_cache_key(results, query, settings)
+        cached_ranking = ranking_cache.get(settings.app.ranking_cache_ttl, cache_key)
+
+        if cached_ranking:
+            logger.info(f"✅ Using cached ranking for {len(results)} results")
+            return cached_ranking
+
         # Rank results by author relevance
-        ranked_results = rank_search_results(
-            books=results,
-            search_query=query,
-            author_threshold=settings.app.author_match_threshold,
-            enable_secondary_scoring=settings.app.enable_secondary_scoring
-        )
-        
+        async with timing_context("Author ranking"):
+            ranked_results = rank_search_results(
+                books=results,
+                search_query=query,
+                author_threshold=settings.app.author_match_threshold,
+                enable_secondary_scoring=settings.app.enable_secondary_scoring
+            )
+
         # Log ranking results for debugging
         logger.info(f"📊 RANKING RESULTS for '{query}'")
         for idx, result in enumerate(ranked_results[:10]):
@@ -550,9 +653,9 @@ async def search_books(
                 f"Authors: {result['book'].authors} | "
                 f"Explanation: {result['explanation']}"
             )
-        
+
         # Convert to RankedAudiobookSearchResult objects
-        return [
+        response = [
             RankedAudiobookSearchResult(
                 book=r['book'],
                 requests=r['book'].requests,
@@ -566,6 +669,11 @@ async def search_books(
             )
             for r in ranked_results
         ]
+
+        # Cache the result
+        ranking_cache.set(response, cache_key)
+
+        return response
     
     # Log search results for debugging (non-ranked)
     logger.info(f"========== SEARCH RESULTS for '{query}' ==========")
@@ -606,7 +714,7 @@ async def clear_metadata_cache(
 ):
     """
     Clear metadata cache entries. Useful for retrying failed enrichments or debugging.
-    
+
     - If no parameters provided, clears all metadata cache
     - If search_key provided, clears cache for that specific key
     - If provider provided, clears cache for that provider
@@ -625,3 +733,51 @@ async def clear_metadata_cache(
     except Exception as e:
         logger.error(f"Failed to clear cache: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to clear cache: {e}")
+
+
+@router.get("/cache-stats")
+async def get_cache_stats(
+    _: Annotated[DetailedUser, Security(APIKeyAuth())],
+):
+    """
+    Get cache statistics for performance monitoring.
+
+    Returns information about:
+    - Fuzzy match cache (for text matching optimization)
+    - Ranking cache (for author relevance ranking)
+    - Upgrade attempt cache (for virtual book upgrade tracking)
+    """
+    from app.internal.prowlarr.util import fuzzy_match_cache
+
+    settings = Settings()
+
+    # Helper to safely get cache size
+    def get_cache_size(cache):
+        try:
+            if hasattr(cache, "_cache"):
+                return len(cache._cache)
+            return 0
+        except Exception:
+            return 0
+
+    return {
+        "fuzzy_match_cache": {
+            "size": get_cache_size(fuzzy_match_cache),
+            "ttl_seconds": settings.app.fuzzy_match_cache_ttl,
+            "description": "Caches fuzzy string matching scores to avoid redundant calculations"
+        },
+        "ranking_cache": {
+            "size": get_cache_size(ranking_cache),
+            "ttl_seconds": settings.app.ranking_cache_ttl,
+            "description": "Caches author relevance ranking results for repeated queries"
+        },
+        "upgrade_attempt_cache": {
+            "size": get_cache_size(upgrade_attempt_cache),
+            "ttl_seconds": settings.app.upgrade_attempt_cache_ttl,
+            "description": "Caches virtual book upgrade attempts to avoid redundant Audible searches"
+        },
+        "performance_settings": {
+            "max_concurrent_audible_requests": settings.app.max_concurrent_audible_requests,
+            "description": "Maximum number of concurrent Audible API requests allowed"
+        }
+    }
