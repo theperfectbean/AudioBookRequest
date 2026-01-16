@@ -137,18 +137,26 @@ def create_new_user(
             detail=e.detail,
         )
 
-    user = create_user(
-        username=user_data.username,
-        password=user_data.password,
-        group=user_data.group,
-        root=user_data.root,
-        extra_data=user_data.extra_data,
-    )
+    try:
+        user = create_user(
+            username=user_data.username,
+            password=user_data.password,
+            group=user_data.group,
+            root=user_data.root,
+            extra_data=user_data.extra_data,
+        )
 
-    session.add(user)
-    session.commit()
+        session.add(user)
+        session.commit()
 
-    return UserResponse.from_user(user)
+        return UserResponse.from_user(user)
+    except HTTPException:
+        session.rollback()
+        raise
+    except Exception as e:
+        session.rollback()
+        logger.exception("Failed to create user", username=user_data.username, error=e)
+        raise HTTPException(status_code=500, detail="Failed to create user")
 
 
 @router.put("/{username}", response_model=UserResponse)
@@ -203,10 +211,18 @@ def update_user(
     if user_data.group is not None:
         user.group = user_data.group
 
-    session.add(user)
-    session.commit()
+    try:
+        session.add(user)
+        session.commit()
 
-    return UserResponse.from_user(user)
+        return UserResponse.from_user(user)
+    except HTTPException:
+        session.rollback()
+        raise
+    except Exception as e:
+        session.rollback()
+        logger.exception("Failed to update user", username=username, error=e)
+        raise HTTPException(status_code=500, detail="Failed to update user")
 
 
 @router.delete("/{username}", status_code=status.HTTP_204_NO_CONTENT)
@@ -240,5 +256,13 @@ def delete_user(
             detail="Cannot delete root user",
         )
 
-    session.delete(user)
-    session.commit()
+    try:
+        session.delete(user)
+        session.commit()
+    except HTTPException:
+        session.rollback()
+        raise
+    except Exception as e:
+        session.rollback()
+        logger.exception("Failed to delete user", username=username, error=e)
+        raise HTTPException(status_code=500, detail="Failed to delete user")

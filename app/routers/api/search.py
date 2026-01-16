@@ -176,15 +176,28 @@ async def check_and_upgrade_virtual_book(
         )
         
         if upgraded:
-            # Replace the virtual book with the real one
-            # Delete the old virtual book
-            session.delete(existing)
-            session.commit()
-            
-            # Store the new real book
-            session.add(upgraded)
-            session.commit()
-            
+            # Replace the virtual book with the real one atomically
+            try:
+                session.delete(existing)
+                session.add(upgraded)
+                session.commit()
+                logger.info(
+                    f"Upgraded virtual book {existing.asin} → {upgraded.asin}",
+                    virtual_asin=existing.asin,
+                    real_asin=upgraded.asin
+                )
+            except Exception as e:
+                session.rollback()
+                logger.error(
+                    f"Failed to upgrade virtual book, rolled back transaction",
+                    virtual_asin=existing.asin,
+                    real_asin=upgraded.asin,
+                    error=str(e),
+                    error_type=type(e).__name__
+                )
+                # Return existing virtual book on failure
+                return existing
+
             return upgraded
         
         # No upgrade found, return existing virtual book
@@ -442,36 +455,53 @@ async def search_books(
                     ]
                     
                     enriched_books = await asyncio.gather(*enrichment_tasks, return_exceptions=True)
-                    
-                    # Build results map with enriched books
+
+                    # Build results map with enriched books and persist to database
                     results_map = {}
-                    for book in results:
-                        if book.asin.startswith("VIRTUAL-"):
-                            # Find corresponding enriched result
-                            idx = virtual_books.index(book)
-                            enriched = enriched_books[idx]
-                            if isinstance(enriched, Exception):
-                                logger.error(
-                                    f"Failed to enrich {book.asin}",
-                                    error=str(enriched),
-                                    title=book.title,
-                                    authors=book.authors
-                                )
-                                results_map[book.asin] = book
+                    successful = 0
+                    failed = 0
+
+                    try:
+                        for book in results:
+                            if book.asin.startswith("VIRTUAL-"):
+                                # Find corresponding enriched result
+                                idx = virtual_books.index(book)
+                                enriched = enriched_books[idx]
+                                if isinstance(enriched, Exception):
+                                    logger.error(
+                                        f"Failed to enrich {book.asin}",
+                                        error=str(enriched),
+                                        title=book.title,
+                                        authors=book.authors
+                                    )
+                                    results_map[book.asin] = book
+                                    failed += 1
+                                else:
+                                    # Merge enriched book into session to persist changes
+                                    session.merge(enriched)
+                                    results_map[book.asin] = enriched
+                                    successful += 1
                             else:
-                                results_map[book.asin] = enriched
-                        else:
-                            results_map[book.asin] = book
-                    
-                    results = list(results_map.values())
-                    # Commit enrichment changes to database
-                    session.commit()
-                    
-                    successful = sum(1 for r in enriched_books if not isinstance(r, Exception))
-                    failed = sum(1 for r in enriched_books if isinstance(r, Exception))
-                    logger.info(
-                        f"✅ Enrichment complete: {successful} successful, {failed} failed"
-                    )
+                                results_map[book.asin] = book
+
+                        results = list(results_map.values())
+
+                        # Commit enrichment changes to database
+                        session.commit()
+                        logger.info(
+                            f"✅ Enrichment complete: {successful} successful, {failed} failed, changes persisted to database"
+                        )
+                    except Exception as e:
+                        session.rollback()
+                        logger.error(
+                            f"Failed to persist enriched metadata, rolled back",
+                            error=str(e),
+                            error_type=type(e).__name__,
+                            successful=successful,
+                            failed=failed
+                        )
+                        # Continue with enriched books in memory (not persisted)
+                        logger.warning("Continuing with non-persisted enrichment in search results")
         else:
             # Standard Audible-first search
             logger.info(f"🔍 STANDARD AUDIBLE SEARCH | Query: '{query}' | Mode: Audible-first (NO Prowlarr verification)")

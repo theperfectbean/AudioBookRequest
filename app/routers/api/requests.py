@@ -75,14 +75,22 @@ async def create_request(
             AudiobookRequest.user_username == user.username,
         )
     ).first():
-        book_request = AudiobookRequest(asin=asin, user_username=user.username)
-        session.add(book_request)
-        session.commit()
-        logger.info(
-            "Added new audiobook request",
-            username=user.username,
-            asin=asin,
-        )
+        try:
+            book_request = AudiobookRequest(asin=asin, user_username=user.username)
+            session.add(book_request)
+            session.commit()
+            logger.info(
+                "Added new audiobook request",
+                username=user.username,
+                asin=asin,
+            )
+        except HTTPException:
+            session.rollback()
+            raise
+        except Exception as e:
+            session.rollback()
+            logger.exception("Failed to add audiobook request", username=user.username, asin=asin, error=e)
+            raise HTTPException(status_code=500, detail="Failed to add request")
     else:
         raise HTTPException(status_code=409, detail="Book already requested")
 
@@ -122,19 +130,27 @@ async def delete_request(
     session: Annotated[Session, Depends(get_session)],
     user: Annotated[DetailedUser, Security(APIKeyAuth())],
 ):
-    if user.is_admin():
-        session.execute(
-            delete(AudiobookRequest).where(col(AudiobookRequest.asin) == asin)
-        )
-    else:
-        session.execute(
-            delete(AudiobookRequest).where(
-                (col(AudiobookRequest.asin) == asin)
-                & (col(AudiobookRequest.user_username) == user.username)
+    try:
+        if user.is_admin():
+            session.execute(
+                delete(AudiobookRequest).where(col(AudiobookRequest.asin) == asin)
             )
-        )
-    session.commit()
-    return Response(status_code=204)
+        else:
+            session.execute(
+                delete(AudiobookRequest).where(
+                    (col(AudiobookRequest.asin) == asin)
+                    & (col(AudiobookRequest.user_username) == user.username)
+                )
+            )
+        session.commit()
+        return Response(status_code=204)
+    except HTTPException:
+        session.rollback()
+        raise
+    except Exception as e:
+        session.rollback()
+        logger.exception("Failed to delete audiobook request", asin=asin, username=user.username, error=e)
+        raise HTTPException(status_code=500, detail="Failed to delete request")
 
 
 @router.patch("/{asin}/downloaded")
@@ -146,17 +162,25 @@ async def mark_downloaded(
 ):
     book = session.exec(select(Audiobook).where(Audiobook.asin == asin)).first()
     if book:
-        book.downloaded = True
-        session.add(book)
-        session.commit()
+        try:
+            book.downloaded = True
+            session.add(book)
+            session.commit()
 
-        background_task.add_task(
-            send_all_notifications,
-            event_type=EventEnum.on_successful_download,
-            requester=None,
-            book_asin=asin,
-        )
-        return Response(status_code=204)
+            background_task.add_task(
+                send_all_notifications,
+                event_type=EventEnum.on_successful_download,
+                requester=None,
+                book_asin=asin,
+            )
+            return Response(status_code=204)
+        except HTTPException:
+            session.rollback()
+            raise
+        except Exception as e:
+            session.rollback()
+            logger.exception("Failed to mark book as downloaded", asin=asin, error=e)
+            raise HTTPException(status_code=500, detail="Failed to mark book as downloaded")
     raise HTTPException(status_code=404, detail="Book not found")
 
 
@@ -191,24 +215,32 @@ async def create_manual_request(
     background_task: BackgroundTasks,
     user: Annotated[DetailedUser, Security(APIKeyAuth())],
 ):
-    book_request = ManualBookRequest(
-        user_username=user.username,
-        title=body.title,
-        authors=body.author.split(","),
-        narrators=body.narrator.split(",") if body.narrator else [],
-        subtitle=body.subtitle,
-        publish_date=body.publish_date,
-        additional_info=body.info,
-    )
-    session.add(book_request)
-    session.commit()
+    try:
+        book_request = ManualBookRequest(
+            user_username=user.username,
+            title=body.title,
+            authors=body.author.split(","),
+            narrators=body.narrator.split(",") if body.narrator else [],
+            subtitle=body.subtitle,
+            publish_date=body.publish_date,
+            additional_info=body.info,
+        )
+        session.add(book_request)
+        session.commit()
 
-    background_task.add_task(
-        send_all_manual_notifications,
-        event_type=EventEnum.on_new_request,
-        book_request=ManualBookRequest.model_validate(book_request),
-    )
-    return Response(status_code=201)
+        background_task.add_task(
+            send_all_manual_notifications,
+            event_type=EventEnum.on_new_request,
+            book_request=ManualBookRequest.model_validate(book_request),
+        )
+        return Response(status_code=201)
+    except HTTPException:
+        session.rollback()
+        raise
+    except Exception as e:
+        session.rollback()
+        logger.exception("Failed to create manual book request", username=user.username, title=body.title, error=e)
+        raise HTTPException(status_code=500, detail="Failed to create manual request")
 
 
 @router.put("/manual/{id}", status_code=204)
@@ -225,16 +257,24 @@ async def update_manual_request(
     if not user.is_admin() and book_request.user_username != user.username:
         raise HTTPException(status_code=403, detail="Not authorized")
 
-    book_request.title = body.title
-    book_request.subtitle = body.subtitle
-    book_request.authors = body.author.split(",")
-    book_request.narrators = body.narrator.split(",") if body.narrator else []
-    book_request.publish_date = body.publish_date
-    book_request.additional_info = body.info
+    try:
+        book_request.title = body.title
+        book_request.subtitle = body.subtitle
+        book_request.authors = body.author.split(",")
+        book_request.narrators = body.narrator.split(",") if body.narrator else []
+        book_request.publish_date = body.publish_date
+        book_request.additional_info = body.info
 
-    session.add(book_request)
-    session.commit()
-    return Response(status_code=204)
+        session.add(book_request)
+        session.commit()
+        return Response(status_code=204)
+    except HTTPException:
+        session.rollback()
+        raise
+    except Exception as e:
+        session.rollback()
+        logger.exception("Failed to update manual book request", id=str(id), username=user.username, error=e)
+        raise HTTPException(status_code=500, detail="Failed to update manual request")
 
 
 @router.patch("/manual/{id}/downloaded")
@@ -246,16 +286,24 @@ async def mark_manual_downloaded(
 ):
     book_request = session.get(ManualBookRequest, id)
     if book_request:
-        book_request.downloaded = True
-        session.add(book_request)
-        session.commit()
+        try:
+            book_request.downloaded = True
+            session.add(book_request)
+            session.commit()
 
-        background_task.add_task(
-            send_all_manual_notifications,
-            event_type=EventEnum.on_successful_download,
-            book_request=ManualBookRequest.model_validate(book_request),
-        )
-        return Response(status_code=204)
+            background_task.add_task(
+                send_all_manual_notifications,
+                event_type=EventEnum.on_successful_download,
+                book_request=ManualBookRequest.model_validate(book_request),
+            )
+            return Response(status_code=204)
+        except HTTPException:
+            session.rollback()
+            raise
+        except Exception as e:
+            session.rollback()
+            logger.exception("Failed to mark manual request as downloaded", id=str(id), error=e)
+            raise HTTPException(status_code=500, detail="Failed to mark request as downloaded")
     raise HTTPException(status_code=404, detail="Request not found")
 
 
@@ -267,9 +315,17 @@ async def delete_manual_request(
 ):
     book = session.get(ManualBookRequest, id)
     if book:
-        session.delete(book)
-        session.commit()
-        return Response(status_code=204)
+        try:
+            session.delete(book)
+            session.commit()
+            return Response(status_code=204)
+        except HTTPException:
+            session.rollback()
+            raise
+        except Exception as e:
+            session.rollback()
+            logger.exception("Failed to delete manual book request", id=str(id), error=e)
+            raise HTTPException(status_code=500, detail="Failed to delete manual request")
     raise HTTPException(status_code=404, detail="Request not found")
 
 
@@ -342,9 +398,17 @@ async def download_book(
 
     book = session.exec(select(Audiobook).where(Audiobook.asin == asin)).first()
     if book:
-        book.downloaded = True
-        session.add(book)
-        session.commit()
+        try:
+            book.downloaded = True
+            session.add(book)
+            session.commit()
+        except HTTPException:
+            session.rollback()
+            raise
+        except Exception as e:
+            session.rollback()
+            logger.exception("Failed to mark book as downloaded", asin=asin, error=e)
+            raise HTTPException(status_code=500, detail="Failed to mark book as downloaded")
 
     return Response(status_code=204)
 
