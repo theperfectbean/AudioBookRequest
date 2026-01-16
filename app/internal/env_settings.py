@@ -58,6 +58,20 @@ class ApplicationSettings(BaseModel):
     enable_secondary_scoring: bool = True
     """Enable secondary scoring factors (title, recency, popularity)"""
 
+    # Performance Settings
+    max_concurrent_audible_requests: int = 15
+    """Maximum concurrent Audible API requests (default: 15, recommended max: 30)"""
+
+    # Cache TTL Settings (seconds)
+    fuzzy_match_cache_ttl: int = 3600
+    """TTL for fuzzy matching cache (default: 1 hour)"""
+
+    ranking_cache_ttl: int = 1800
+    """TTL for author ranking cache (default: 30 minutes)"""
+
+    upgrade_attempt_cache_ttl: int = 86400
+    """TTL for virtual book upgrade attempt cache (default: 24 hours)"""
+
     def get_force_login_type(self) -> LoginTypeEnum | None:
         if self.force_login_type.strip():
             try:

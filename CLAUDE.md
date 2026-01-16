@@ -70,7 +70,6 @@ docker compose --profile local up --build
 - `User` - Authentication with groups (untrusted/trusted/admin)
 - `Audiobook` - Cached book metadata with ASIN as primary key
 - `AudiobookRequest` - User requests linked to audiobooks
-- `ManualBookRequest` - Manually entered book requests
 - `APIKey` - Argon2-hashed API keys for programmatic access
 
 ### Authentication System

@@ -1,4 +1,3 @@
-import uuid
 from typing import Annotated
 from aiohttp import ClientSession
 from fastapi import (
@@ -20,7 +19,6 @@ from app.internal.book_search import (
 )
 from app.internal.models import (
     GroupEnum,
-    ManualBookRequest,
 )
 from app.internal.prowlarr.util import prowlarr_config
 from app.internal.ranking.quality import quality_config
@@ -36,9 +34,6 @@ from app.routers.api.search import (
 from app.routers.api.requests import (
     create_request,
     delete_request as api_delete_request,
-    create_manual_request,
-    ManualRequest,
-    update_manual_request,
 )
 
 router = APIRouter(prefix="/search")
@@ -194,55 +189,3 @@ async def delete_request(
         block_name="book_wishlist",
     )
 
-@router.get("/manual")
-async def read_manual(
-    request: Request,
-    session: Annotated[Session, Depends(get_session)],
-    user: Annotated[DetailedUser, Security(ABRAuth())],
-    id: uuid.UUID | None = None,
-):
-    book = None
-    if id:
-        book = session.get(ManualBookRequest, id)
-    auto_download = quality_config.get_auto_download(session)
-    return template_response(
-        "manual.html",
-        request,
-        user,
-        {"auto_download": auto_download, "book": book}
-    )
-
-@router.post("/manual")
-async def add_manual(
-    request: Request,
-    session: Annotated[Session, Depends(get_session)],
-    background_task: BackgroundTasks,
-    title: Annotated[str, Form()],
-    author: Annotated[str, Form()],
-    user: Annotated[DetailedUser, Security(ABRAuth())],
-    narrator: Annotated[str | None, Form()] = None,
-    subtitle: Annotated[str | None, Form()] = None,
-    publish_date: Annotated[str | None, Form()] = None,
-    info: Annotated[str | None, Form()] = None,
-    id: uuid.UUID | None = None,
-):
-    req_body = ManualRequest(
-        title=title,
-        author=author,
-        narrator=narrator,
-        subtitle=subtitle,
-        publish_date=publish_date,
-        info=info,
-    )
-    if id:
-        await update_manual_request(id, req_body, session, user)
-    else:
-        await create_manual_request(req_body, session, background_task, user)
-    auto_download = quality_config.get_auto_download(session)
-    return template_response(
-        "manual.html",
-        request,
-        user,
-        {"success": "Successfully added request", "auto_download": auto_download},
-        block_name="form",
-    )

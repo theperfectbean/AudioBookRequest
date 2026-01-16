@@ -22,12 +22,32 @@ async def edit_source_metadata(
         if exc:
             logger.error("Failed to setup indexer", error=str(exc))
 
-    coros = []
-    for source in sources:
+    # Helper function to find matching indexer for a source
+    async def find_matching_indexer(
+        source: ProwlarrSource,
+    ) -> tuple[ProwlarrSource, type] | None:
         for context in contexts:
-            if await context.indexer.is_matching_source(source, container):
-                coros.append(context.indexer.edit_source_metadata(source, container))
-                break
+            try:
+                if await context.indexer.is_matching_source(source, container):
+                    return (source, context)
+            except Exception as e:
+                logger.error(
+                    f"Failed to check if source matches indexer",
+                    error=str(e),
+                    indexer=type(context.indexer).__name__
+                )
+        return None
+
+    # Execute all source-indexer matches in parallel
+    match_tasks = [find_matching_indexer(source) for source in sources]
+    matches = await asyncio.gather(*match_tasks, return_exceptions=True)
+
+    # Build metadata edit tasks from successful matches
+    coros = []
+    for match in matches:
+        if match and not isinstance(match, Exception):
+            source, context = match
+            coros.append(context.indexer.edit_source_metadata(source, container))
 
     exceptions = await asyncio.gather(*coros, return_exceptions=True)
     for exc in exceptions:

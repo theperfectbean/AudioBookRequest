@@ -1,15 +1,14 @@
-from typing import Literal, Sequence, cast
+from typing import Literal, cast
 
 from pydantic import BaseModel
 from sqlalchemy import func
 from sqlalchemy.orm import InstrumentedAttribute, selectinload
-from sqlmodel import Session, asc, col, not_, select
+from sqlmodel import Session, col, not_, select
 
 from app.internal.models import (
     Audiobook,
     AudiobookRequest,
     AudiobookWishlistResult,
-    ManualBookRequest,
     User,
 )
 
@@ -17,7 +16,6 @@ from app.internal.models import (
 class WishlistCounts(BaseModel):
     requests: int
     downloaded: int
-    manual: int
 
 
 def get_wishlist_counts(session: Session, user: User | None = None) -> WishlistCounts:
@@ -42,19 +40,9 @@ def get_wishlist_counts(session: Session, user: User | None = None) -> WishlistC
         else:
             requests = count
 
-    manual = session.exec(
-        select(func.count())
-        .select_from(ManualBookRequest)
-        .where(
-            not username or ManualBookRequest.user_username == username,
-            col(ManualBookRequest.user_username).is_not(None),
-        )
-    ).one()
-
     return WishlistCounts(
         requests=requests,
         downloaded=downloaded,
-        manual=manual,
     )
 
 
@@ -104,14 +92,3 @@ def get_wishlist_results(
     ]
 
 
-def get_all_manual_requests(
-    session: Session, user: User
-) -> Sequence[ManualBookRequest]:
-    return session.exec(
-        select(ManualBookRequest)
-        .where(
-            user.is_admin() or ManualBookRequest.user_username == user.username,
-            col(ManualBookRequest.user_username).is_not(None),
-        )
-        .order_by(asc(ManualBookRequest.downloaded))
-    ).all()

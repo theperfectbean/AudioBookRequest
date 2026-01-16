@@ -15,15 +15,12 @@ from sqlmodel import Session
 
 from app.internal.auth.authentication import ABRAuth, DetailedUser
 from app.internal.db_queries import (
-    get_all_manual_requests,
     get_wishlist_counts,
     get_wishlist_results,
 )
 from app.internal.models import GroupEnum
 from app.routers.api.requests import (
     DownloadSourceBody,
-    delete_manual_request,
-    mark_manual_downloaded,
     start_auto_download_endpoint,
 )
 from app.routers.api.requests import download_book as api_download_book
@@ -93,75 +90,6 @@ async def update_downloaded(
         {
             "results": results,
             "page": "wishlist",
-            "counts": counts,
-            "update_tablist": True,
-        },
-        block_name="book_wishlist",
-    )
-
-
-@router.get("/manual")
-async def manual(
-    request: Request,
-    session: Annotated[Session, Depends(get_session)],
-    user: Annotated[DetailedUser, Security(ABRAuth())],
-):
-    books = get_all_manual_requests(session, user)
-    counts = get_wishlist_counts(session, user)
-    return template_response(
-        "wishlist_page/manual.html",
-        request,
-        user,
-        {"books": books, "page": "manual", "counts": counts},
-    )
-
-
-@router.patch("/manual/{id}")
-async def downloaded_manual(
-    request: Request,
-    id: uuid.UUID,
-    session: Annotated[Session, Depends(get_session)],
-    background_task: BackgroundTasks,
-    admin_user: Annotated[DetailedUser, Security(ABRAuth(GroupEnum.admin))],
-):
-    await mark_manual_downloaded(id, session, background_task, admin_user)
-
-    books = get_all_manual_requests(session, admin_user)
-    counts = get_wishlist_counts(session, admin_user)
-
-    return template_response(
-        "wishlist_page/manual.html",
-        request,
-        admin_user,
-        {
-            "books": books,
-            "page": "manual",
-            "counts": counts,
-            "update_tablist": True,
-        },
-        block_name="book_wishlist",
-    )
-
-
-@router.delete("/manual/{id}")
-async def delete_manual(
-    request: Request,
-    id: uuid.UUID,
-    session: Annotated[Session, Depends(get_session)],
-    admin_user: Annotated[DetailedUser, Security(ABRAuth(GroupEnum.admin))],
-):
-    await delete_manual_request(id, session, admin_user)
-
-    books = get_all_manual_requests(session, admin_user)
-    counts = get_wishlist_counts(session, admin_user)
-
-    return template_response(
-        "wishlist_page/manual.html",
-        request,
-        admin_user,
-        {
-            "books": books,
-            "page": "manual",
             "counts": counts,
             "update_tablist": True,
         },

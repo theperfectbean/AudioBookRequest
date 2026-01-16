@@ -6,7 +6,6 @@ from sqlmodel import Session, select
 from app.internal.models import (
     Audiobook,
     EventEnum,
-    ManualBookRequest,
     Notification,
     NotificationBodyTypeEnum,
     User,
@@ -171,73 +170,3 @@ async def send_all_notifications(
                 )
 
 
-async def send_manual_notification(
-    notification: Notification,
-    book: ManualBookRequest,
-    requester: User | None = None,
-    other_replacements: dict[str, str] | None = None,
-):
-    """Send a notification for manual book requests"""
-    if other_replacements is None:
-        other_replacements = {}
-    try:
-        book_authors = ",".join(book.authors)
-        book_narrators = ",".join(book.narrators)
-
-        body = _replace_variables(
-            notification.body,
-            requester,
-            book.title,
-            book_authors,
-            book_narrators,
-            notification.event.value,
-            other_replacements,
-        )
-
-        if notification.body_type == NotificationBodyTypeEnum.json:
-            body = json.loads(body)  # pyright: ignore[reportAny]
-
-        logger.info(
-            "Sending manual notification",
-            url=notification.url,
-            body=body,
-            event_type=notification.event.value,
-            body_type=notification.body_type.value,
-            headers=notification.headers,
-        )
-
-        async with ClientSession() as client_session:
-            return await _send(body, notification, client_session)
-
-    except Exception as e:
-        logger.error("Failed to send notification", error=str(e))
-        return None
-
-
-async def send_all_manual_notifications(
-    event_type: EventEnum,
-    book_request: ManualBookRequest,
-    other_replacements: dict[str, str] | None = None,
-):
-    if other_replacements is None:
-        other_replacements = {}
-    with next(get_session()) as session:
-        user = session.exec(
-            select(User).where(User.username == book_request.user_username)
-        ).first()
-        notifications = session.exec(
-            select(Notification).where(
-                Notification.event == event_type, Notification.enabled
-            )
-        ).all()
-        for notif in notifications:
-            succ = await send_manual_notification(
-                notification=notif,
-                book=book_request,
-                requester=user,
-                other_replacements=other_replacements,
-            )
-            if succ:
-                logger.info("Manual notification sent successfully", url=notif.url)
-            else:
-                logger.error("Failed to send manual notification", url=notif.url)

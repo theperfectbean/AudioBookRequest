@@ -80,11 +80,48 @@ prowlarr_config = ProwlarrConfig()
 prowlarr_source_cache = SimpleCache[list[ProwlarrSource], str]()
 prowlarr_indexer_cache = SimpleCache[Indexer, str]()
 
+# Fuzzy match cache: (score, algo, text1, text2)
+fuzzy_match_cache: SimpleCache[float, str, str, str] = SimpleCache()
+
 
 def flush_prowlarr_cache():
     logger.info("Flushing prowlarr caches")
     prowlarr_source_cache.flush()
     prowlarr_indexer_cache.flush()
+    fuzzy_match_cache.flush()
+
+
+def cached_fuzz_score(algo: str, text1: str, text2: str, ttl: int | None = None) -> float:
+    """Cached wrapper for rapidfuzz algorithms
+
+    Args:
+        algo: Algorithm to use (token_set_ratio, ratio, partial_ratio)
+        text1: First text to compare
+        text2: Second text to compare
+        ttl: Cache TTL in seconds (defaults to fuzzy_match_cache_ttl from settings)
+    """
+    from app.internal.env_settings import Settings
+
+    if ttl is None:
+        ttl = Settings().app.fuzzy_match_cache_ttl
+
+    # Limit key size to prevent memory bloat
+    cache_key = (algo, text1[:100], text2[:100])
+    cached = fuzzy_match_cache.get(ttl, *cache_key)
+    if cached is not None:
+        return cached
+
+    if algo == "token_set_ratio":
+        score = fuzz.token_set_ratio(text1, text2)
+    elif algo == "ratio":
+        score = fuzz.ratio(text1, text2)
+    elif algo == "partial_ratio":
+        score = fuzz.partial_ratio(text1, text2)
+    else:
+        raise ValueError(f"Unknown algorithm: {algo}")
+
+    fuzzy_match_cache.set(score, *cache_key)
+    return score
 
 
 def normalize_text(text: str | None, primary_only: bool = False) -> str:
@@ -144,13 +181,13 @@ def verify_match(
     # Pass 1: Try primary titles (before colons/brackets)
     p_title_primary = normalize_text(p_result.title, primary_only=True)
     a_title_primary = normalize_text(a_result.title, primary_only=True)
-    title_score = fuzz.token_set_ratio(p_title_primary, a_title_primary)
+    title_score = cached_fuzz_score("token_set_ratio", p_title_primary, a_title_primary)
 
     # Pass 2: If primary titles don't match well, try full titles
     if title_score < 85:
         title_score = max(
             title_score,
-            fuzz.token_set_ratio(p_title_norm, a_title_norm),
+            cached_fuzz_score("token_set_ratio", p_title_norm, a_title_norm),
         )
 
     # Handle Short Titles
@@ -174,11 +211,11 @@ def verify_match(
         author_tokens = p_author_norm.split()
         if len(author_tokens) >= 2:
             # For multi-token author names ("FirstName LastName"), use stricter fuzz.ratio
-            author_score = fuzz.ratio(p_author_norm, a_authors_norm)
+            author_score = cached_fuzz_score("ratio", p_author_norm, a_authors_norm)
             author_threshold = 85
         else:
             # For single tokens ("Sanderson"), use more permissive token_set_ratio
-            author_score = fuzz.token_set_ratio(p_author_norm, a_authors_norm)
+            author_score = cached_fuzz_score("token_set_ratio", p_author_norm, a_authors_norm)
             author_threshold = 80
 
         author_match = author_score >= author_threshold
@@ -229,12 +266,12 @@ def verify_match_relaxed(
     # Score title with relaxed threshold
     p_title_primary = normalize_text(p_result.title, primary_only=True)
     a_title_primary = normalize_text(a_result.title, primary_only=True)
-    title_score = fuzz.token_set_ratio(p_title_primary, a_title_primary)
+    title_score = cached_fuzz_score("token_set_ratio", p_title_primary, a_title_primary)
 
     if title_score < 75:  # Relaxed from 85
         title_score = max(
             title_score,
-            fuzz.token_set_ratio(p_title_norm, a_title_norm),
+            cached_fuzz_score("token_set_ratio", p_title_norm, a_title_norm),
         )
 
     # Relaxed thresholds
@@ -253,10 +290,10 @@ def verify_match_relaxed(
     else:
         author_tokens = p_author_norm.split()
         if len(author_tokens) >= 2:
-            author_score = fuzz.ratio(p_author_norm, a_authors_norm)
+            author_score = cached_fuzz_score("ratio", p_author_norm, a_authors_norm)
             author_threshold = 75  # Relaxed from 85
         else:
-            author_score = fuzz.token_set_ratio(p_author_norm, a_authors_norm)
+            author_score = cached_fuzz_score("token_set_ratio", p_author_norm, a_authors_norm)
             author_threshold = 70  # Relaxed from 80
         
         author_match = author_score >= author_threshold
