@@ -20,7 +20,7 @@ from app.internal.book_search import (
     list_popular_books,
     get_book_by_asin,
 )
-from app.internal.models import Audiobook, AudiobookSearchResult
+from app.internal.models import Audiobook, AudiobookRequest, AudiobookSearchResult
 from app.internal.prowlarr.search_integration import (
     search_prowlarr_available,
     ProwlarrSearchResult,
@@ -195,13 +195,20 @@ async def check_and_upgrade_virtual_book(
     """
     Check if we have an existing virtual book for this Prowlarr result,
     and if so, try to upgrade it to a real Audible book.
+    
+    Uses database-level locking (SELECT FOR UPDATE) to prevent concurrent
+    upgrade race conditions. Only one request can hold the lock for a given
+    virtual ASIN, making delete+insert atomic.
     """
     # Generate what the virtual ASIN would be
     virtual_asin = generate_virtual_asin(p_result.title, p_result.author)
     
-    # Check if this virtual book exists in database
+    # Acquire write lock on the virtual book row (if it exists)
+    # This prevents other concurrent requests from upgrading simultaneously
     existing = session.exec(
-        select(Audiobook).where(Audiobook.asin == virtual_asin)
+        select(Audiobook)
+        .where(Audiobook.asin == virtual_asin)
+        .with_for_update()  # Database-level lock: only one transaction can hold it
     ).first()
     
     if existing:
@@ -211,16 +218,94 @@ async def check_and_upgrade_virtual_book(
         )
         
         if upgraded:
-            # Replace the virtual book with the real one atomically
+            # Replace the virtual book with the real one (now safe - we hold the lock)
             try:
+                # Step 1: Migrate any existing requests to the new real book
+                existing_requests = session.exec(
+                    select(AudiobookRequest).where(AudiobookRequest.asin == existing.asin)
+                ).all()
+                
+                if existing_requests:
+                    logger.info(
+                        f"Migrating {len(existing_requests)} requests from virtual to real book",
+                        virtual_asin=existing.asin,
+                        real_asin=upgraded.asin
+                    )
+                    
+                    # Delete old requests (CASCADE will handle this when we delete the book)
+                    # But we need to recreate them with new ASIN to preserve user requests
+                    for req in existing_requests:
+                        new_req = AudiobookRequest(
+                            asin=upgraded.asin,  # New real ASIN
+                            user_username=req.user_username,
+                            updated_at=req.updated_at
+                        )
+                        session.add(new_req)
+                
+                # Step 2: Now safe to delete virtual book and add real book
                 session.delete(existing)
-                session.add(upgraded)
+                # Use merge instead of add to handle existing records gracefully
+                session.merge(upgraded)
                 session.commit()
                 logger.info(
                     f"Upgraded virtual book {existing.asin} → {upgraded.asin}",
                     virtual_asin=existing.asin,
                     real_asin=upgraded.asin
                 )
+            except IntegrityError as e:
+                # Primary key conflict: another request may have already upgraded this book
+                session.rollback()
+                logger.warning(
+                    f"Virtual book upgrade conflict (another request won the race)",
+                    virtual_asin=existing.asin,
+                    real_asin=upgraded.asin,
+                    error=str(e)
+                )
+                
+                # Re-query to get current database state after rollback
+                current_state = session.exec(
+                    select(Audiobook).where(Audiobook.asin == virtual_asin)
+                ).first()
+                
+                if current_state:
+                    # Virtual book still exists (another concurrent upgrade also failed)
+                    logger.debug(
+                        f"Virtual book still exists after rollback",
+                        virtual_asin=virtual_asin
+                    )
+                    return current_state
+                
+                # Check if another request successfully upgraded to the real ASIN
+                real_book = session.exec(
+                    select(Audiobook).where(Audiobook.asin == upgraded.asin)
+                ).first()
+                
+                if real_book:
+                    logger.info(
+                        f"Found existing real book from concurrent upgrade",
+                        real_asin=real_book.asin
+                    )
+                    return real_book
+                
+                # Fallback: Neither exists (database corruption or complex race condition)
+                logger.error(
+                    f"Book disappeared after rollback - possible database issue",
+                    virtual_asin=virtual_asin,
+                    real_asin=upgraded.asin
+                )
+                # Re-create virtual book as emergency fallback
+                fallback = Audiobook(
+                    asin=virtual_asin,
+                    title=p_result.title,
+                    subtitle=None,
+                    authors=[p_result.author],
+                    release_date=p_result.publish_date,
+                    runtime_length_min=0,
+                    cover_image=None,
+                )
+                session.add(fallback)
+                session.commit()
+                return fallback
             except Exception as e:
                 session.rollback()
                 logger.error(
@@ -230,8 +315,30 @@ async def check_and_upgrade_virtual_book(
                     error=str(e),
                     error_type=type(e).__name__
                 )
-                # Return existing virtual book on failure
-                return existing
+                # Re-query to get valid session-bound object
+                current_state = session.exec(
+                    select(Audiobook).where(Audiobook.asin == virtual_asin)
+                ).first()
+                if current_state:
+                    return current_state
+                
+                # Emergency fallback if virtual book also disappeared
+                logger.error(
+                    f"Virtual book disappeared after generic error - recreating",
+                    virtual_asin=virtual_asin
+                )
+                fallback = Audiobook(
+                    asin=virtual_asin,
+                    title=p_result.title,
+                    subtitle=None,
+                    authors=[p_result.author],
+                    release_date=p_result.publish_date,
+                    runtime_length_min=0,
+                    cover_image=None,
+                )
+                session.add(fallback)
+                session.commit()
+                return fallback
 
             return upgraded
         
@@ -273,16 +380,26 @@ async def check_and_upgrade_virtual_book_cached(
             # If real book not found (unlikely), fall through to try upgrade again
 
     # Not cached, perform upgrade check
-    result = await check_and_upgrade_virtual_book(
-        session, client_session, p_result, region
-    )
+    try:
+        result = await check_and_upgrade_virtual_book(
+            session, client_session, p_result, region
+        )
+    except Exception as e:
+        logger.error(
+            f"Upgrade check failed with exception",
+            virtual_asin=virtual_asin,
+            error=str(e),
+            error_type=type(e).__name__
+        )
+        # Don't cache failures - allow retry on next request
+        return None
 
-    # Cache result
+    # Cache result (only if successful)
     if result:
         if result.asin.startswith("VIRTUAL-"):
-            upgrade_attempt_cache.set("", virtual_asin)  # Failed
+            upgrade_attempt_cache.set("", virtual_asin)  # Failed upgrade
         else:
-            upgrade_attempt_cache.set(result.asin, virtual_asin)  # Succeeded
+            upgrade_attempt_cache.set(result.asin, virtual_asin)  # Successful upgrade
 
     return result
 
@@ -561,9 +678,20 @@ async def search_books(
                                     results_map[book.asin] = book
                                     failed += 1
                                 else:
-                                    # Merge enriched book into session to persist changes
-                                    session.merge(enriched)
-                                    results_map[book.asin] = enriched
+                                    # Check if book already exists in database before merging
+                                    existing = session.exec(
+                                        select(Audiobook).where(Audiobook.asin == enriched.asin)
+                                    ).first()
+                                    
+                                    if existing:
+                                        # Book already exists, update it instead of merge to avoid constraint violations
+                                        for attr in ['title', 'subtitle', 'authors', 'narrators', 'cover_image', 'release_date', 'runtime_length_min']:
+                                            setattr(existing, attr, getattr(enriched, attr))
+                                        results_map[book.asin] = existing
+                                    else:
+                                        # New book, safe to merge
+                                        session.merge(enriched)
+                                        results_map[book.asin] = enriched
                                     successful += 1
                             else:
                                 results_map[book.asin] = book
@@ -571,14 +699,23 @@ async def search_books(
                         results = list(results_map.values())
 
                         # Commit enrichment changes to database
-                        session.commit()
-                        logger.info(
-                            f"✅ Enrichment complete: {successful} successful, {failed} failed, changes persisted to database"
-                        )
+                        try:
+                            session.commit()
+                            logger.info(
+                                f"✅ Enrichment complete: {successful} successful, {failed} failed, changes persisted to database"
+                            )
+                        except IntegrityError:
+                            # Some books already exist, that's ok - just use the in-memory versions
+                            session.rollback()
+                            session.expire_all()  # Clear session state after rollback
+                            logger.info(
+                                f"✅ Enrichment complete (some books already in DB): {successful} successful, {failed} failed"
+                            )
                     except IntegrityError as e:
                         session.rollback()
+                        session.expire_all()  # Clear session state after rollback
                         logger.warning(
-                            f"Duplicate ASIN detected during enrichment merge, rolled back",
+                            f"Duplicate ASIN detected during enrichment, rolled back",
                             error=str(e),
                             successful=successful,
                             failed=failed
@@ -587,6 +724,7 @@ async def search_books(
                         logger.info("Continuing with non-persisted enrichment in search results")
                     except Exception as e:
                         session.rollback()
+                        session.expire_all()  # Clear session state after rollback
                         logger.error(
                             f"Failed to persist enriched metadata, rolled back",
                             error=str(e),
