@@ -104,3 +104,68 @@ The app queries Prowlarr for audiobook sources, ranks them by quality heuristics
 - Only suggest test commands for me to run manually in a separate terminal
 - Focus on code generation and review, not execution validation
 - Exception: Only run tests if I explicitly request it for critical verification
+
+## Implementation Journal
+
+### 2026-01-17: Virtual Book Upgrade Race Condition Fix (Comprehensive)
+
+**What was built:** Fixed critical database integrity issue where concurrent virtual book upgrades could cause primary key violations, detached session objects, and lost user requests. Implemented database-level locking with comprehensive error recovery and request migration.
+
+**Plan followed:** ASIN-FIX-PLAN.md (Copilot implementation of Opus architectural plan)
+
+**Files changed:**
+- `app/routers/api/search.py`:
+  - Import: Added `AudiobookRequest` to handle request migration
+  - `check_and_upgrade_virtual_book()` (lines 189-346): Complete rewrite with 4-step upgrade process
+  - `check_and_upgrade_virtual_book_cached()` (lines 349-406): Enhanced exception handling
+
+**Implementation details:**
+
+1. **Database-level locking** (Step 1):
+   - Added `SELECT FOR UPDATE` to acquire exclusive row lock on virtual book
+   - Prevents concurrent transactions from simultaneously upgrading same virtual ASIN
+   - Works in PostgreSQL (true row locking) and SQLite (database-level lock)
+
+2. **Request migration** (Step 4 from plan):
+   - Before deleting virtual book, queries all `AudiobookRequest` records linked to it
+   - Creates new request records with real ASIN to preserve user requests
+   - Prevents CASCADE deletion from losing user request history
+
+3. **Enhanced IntegrityError recovery** (Step 1 improvements):
+   - After rollback, re-queries database to get current state
+   - Returns virtual book if still exists (concurrent upgrade also failed)
+   - Returns real book if another request succeeded (race condition winner)
+   - Emergency fallback: recreates virtual book if both disappeared (database corruption)
+
+4. **Generic exception recovery** (defensive programming):
+   - Similar re-query logic for non-IntegrityError exceptions
+   - Ensures returned object is always session-bound (prevents detached object errors)
+   - Logs detailed error information for debugging
+
+5. **Cache invalidation** (Step 2):
+   - Wrapped upgrade call in try/except to catch unhandled exceptions
+   - Prevents poisoned cache entries from propagating
+   - Allows retry on next request if transient error
+
+**Why this approach:**
+- Database-level locking more reliable than application-level semaphores
+- Works across multiple instances/containers (production deployment)
+- Request migration preserves user intent during upgrade (critical for UX)
+- Re-query pattern ensures session consistency after rollback
+- Emergency fallbacks prevent total failure in edge cases
+
+**Edge cases handled:**
+- Concurrent upgrades to same virtual book → first wins, second returns winner's result
+- Concurrent upgrades to different virtual books → both succeed (no contention)
+- Virtual book with existing user requests → requests migrated before deletion
+- Database corruption → emergency fallback recreates virtual book
+- Cache failures → retry allowed, no poisoned entries
+
+**Deviations from plan:**
+- None - implemented all 4 steps from ASIN-FIX-PLAN.md exactly as designed
+
+**Testing recommendations:**
+- Test concurrent requests: 5+ parallel searches for same book (see plan Test Scenario 1)
+- Test request migration: Create virtual book with requests, trigger upgrade, verify requests transferred
+- Test IntegrityError path: Use mock to force IntegrityError, verify recovery logic
+- Manual: Search for "Evolution of God" with available_only=true, check logs for upgrade flow

@@ -14,57 +14,25 @@
 
 ## Remaining Work 🚧
 
-### 1. Fix Virtual Book Upgrade Race Condition (HIGH PRIORITY)
+### 1. Fix Virtual Book Upgrade Race Condition ✅ **COMPLETED**
 
-**Location:** `app/routers/api/search.py:212-235` (check_and_upgrade_virtual_book)
+**Location:** `app/routers/api/search.py:195-346` (check_and_upgrade_virtual_book)
 
-**Problem:**
-```python
-session.delete(existing)  # Step 1: Delete virtual book
-session.add(upgraded)     # Step 2: Add real book
-session.commit()          # Step 3: Non-atomic
-```
+**Status:** Fixed in commit `f2c439e` (2026-01-17)
 
-Two concurrent requests can both attempt to upgrade the same virtual book, causing:
-- Primary key violations
-- Lost updates
-- Database inconsistency
+**Implementation:** Database-level locking with enhanced error recovery
 
-**Solution Options:**
+**Changes Made:**
+- Added `SELECT FOR UPDATE` row locking to prevent concurrent upgrades
+- Implemented request migration logic to preserve user requests during upgrade
+- Enhanced IntegrityError recovery to re-query database after rollback
+- Added emergency fallback to recreate virtual book if state is lost
+- Improved cache invalidation to prevent poisoned cache entries
 
-**A. Database-Level Locking (Recommended)**
-```python
-# Use SELECT FOR UPDATE to lock the row
-existing = session.exec(
-    select(Audiobook)
-    .where(Audiobook.asin == virtual_asin)
-    .with_for_update()
-).first()
+**Files Modified:**
+- `app/routers/api/search.py`: Enhanced upgrade logic and cache wrapper
 
-if existing and existing.asin.startswith("VIRTUAL-"):
-    # Now safe to delete + insert
-    session.delete(existing)
-    session.add(upgraded)
-    session.commit()
-```
-
-**B. Upsert Pattern**
-```python
-# Use INSERT...ON CONFLICT for PostgreSQL
-# Or REPLACE for SQLite
-from sqlalchemy.dialects.postgresql import insert
-
-stmt = insert(Audiobook).values(**upgraded.model_dump())
-stmt = stmt.on_conflict_do_update(
-    index_elements=['asin'],
-    set_=upgraded.model_dump()
-)
-session.execute(stmt)
-session.commit()
-```
-
-**Effort:** 30 minutes
-**Risk:** Medium - requires testing with concurrent requests
+**See:** `ASIN-FIX-PLAN.md` for full implementation details
 
 ---
 
