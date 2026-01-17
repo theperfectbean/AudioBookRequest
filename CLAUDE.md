@@ -169,3 +169,55 @@ The app queries Prowlarr for audiobook sources, ranks them by quality heuristics
 - Test request migration: Create virtual book with requests, trigger upgrade, verify requests transferred
 - Test IntegrityError path: Use mock to force IntegrityError, verify recovery logic
 - Manual: Search for "Evolution of God" with available_only=true, check logs for upgrade flow
+
+---
+
+### 2026-01-17: Virtual Book Deduplication and Upsert Pattern (Defensive)
+
+**What was built:** Fixed remaining ASIN duplicate insertion issues with in-memory deduplication and defensive database operations. Prevents IntegrityError from parallel virtual book creation and batch storage failures.
+
+**Plan followed:** ASIN-FIXES-TODO.md tasks 2 and 3 (Copilot autonomous implementation)
+
+**Files changed:**
+- `app/routers/api/search.py` (lines 613-623, 563, 594):
+  - Added `seen_virtual_asins: set[str]` tracking before results_map insertion
+  - Skip duplicate virtual ASINs in parallel_results processing loop
+  - Fixed missing `subtitle=None` parameter in Audiobook instantiation (2 locations)
+  
+- `app/internal/book_search.py` (lines 545-569):
+  - Replaced `session.add_all()` with individual `session.merge()` calls
+  - Added IntegrityError handling with batch+individual fallback strategy
+  - Graceful degradation with warning logs for duplicate books
+
+**Implementation details:**
+
+1. **Virtual ASIN Deduplication (Task 2)**:
+   - Problem: Multiple async tasks can create identical virtual ASINs (deterministic hash from title+author)
+   - Solution: Track `seen_virtual_asins` set and skip duplicates before database operations
+   - Why: Simpler than async locks, catches duplicates at earliest point (before results_map)
+   - Performance: O(1) set lookups, minimal overhead
+
+2. **Upsert Pattern in store_new_books() (Task 3)**:
+   - Problem: `add_all()` fails with IntegrityError if book already exists (no recovery)
+   - Solution: Use `merge()` for upsert-like behavior with 2-tier error handling
+   - Fast path: Batch merge all books, commit once
+   - Slow path: On IntegrityError, rollback and merge individually with per-book logging
+   - Why: Optimistic approach (batch) with pessimistic fallback (individual)
+
+**Why this approach:**
+- Deduplication prevents creation of duplicates (better than handling after failure)
+- In-memory tracking simpler than distributed locks, works within single request lifecycle
+- Merge pattern handles both insert and update, eliminates need for explicit existence checks
+- 2-tier strategy balances performance (batch fast path) with resilience (individual fallback)
+
+**Edge cases handled:**
+- Parallel searches returning identical Prowlarr results → only first virtual book kept
+- Concurrent batch storage attempts → merge handles conflicts gracefully
+- Mixed real + virtual books in batch → all handled uniformly
+- Individual merge failures → logged but don't block other books
+
+**Testing recommendations:**
+- Test parallel searches for same book with multiple Prowlarr matches
+- Test rapid-fire searches that would create duplicate virtual ASINs
+- Test store_new_books() with pre-existing books in database
+- Monitor logs for "Skipping duplicate virtual ASIN" and "Skipping duplicate book during storage" messages

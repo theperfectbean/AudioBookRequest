@@ -36,90 +36,48 @@
 
 ---
 
-### 2. Deduplicate Parallel Virtual Book Creation (MEDIUM PRIORITY)
+### 2. Deduplicate Parallel Virtual Book Creation ✅ **COMPLETED**
 
-**Location:** `app/routers/api/search.py:441-519`
+**Location:** `app/routers/api/search.py:610-638`
 
-**Problem:**
-Multiple async tasks can create the same virtual ASIN:
-```python
-fallback_asin = generate_virtual_asin(p_result.title, p_result.author)  # Deterministic
-fallback_book = Audiobook(asin=fallback_asin, ...)  # In memory, not yet in DB
-```
+**Status:** Fixed in commit `871b0cd` (2026-01-17)
 
-Later at line 564, all tasks call `session.merge(enriched)` which can conflict.
+**Implementation:** In-memory deduplication using set tracking
 
-**Solution:**
+**Changes Made:**
+- Added `seen_virtual_asins: set[str]` to track virtual ASINs before database operations
+- Skip duplicate virtual ASINs in parallel results processing loop
+- Prevents IntegrityError from multiple async tasks creating identical virtual books
+- Also fixed missing `subtitle=None` parameter in virtual book instantiation
 
-**A. Deduplication Before Database Operations**
-```python
-# Track seen virtual ASINs in memory
-seen_virtual_asins = set()
-deduplicated_results = []
+**Solution Used:** Option A (deduplication before database operations) - simpler and more efficient than async locks
 
-for book, p_result in parallel_results:
-    if book.asin.startswith("VIRTUAL-"):
-        if book.asin not in seen_virtual_asins:
-            seen_virtual_asins.add(book.asin)
-            deduplicated_results.append((book, p_result))
-    else:
-        deduplicated_results.append((book, p_result))
-```
-
-**B. Async Lock Per ASIN**
-```python
-import asyncio
-from collections import defaultdict
-
-asin_locks = defaultdict(asyncio.Lock)
-
-async def fetch_with_timeout(res, semaphore):
-    virtual_asin = generate_virtual_asin(res.title, res.author)
-    async with asin_locks[virtual_asin]:  # Only one task creates this ASIN
-        # ... existing fetch logic ...
-```
-
-**Effort:** 30 minutes
-**Risk:** Low - pure deduplication logic
+**Files Modified:**
+- `app/routers/api/search.py`: Added deduplication logic at line 613-623
 
 ---
 
-### 3. Add Upsert Pattern to store_new_books() (LOW PRIORITY)
+### 3. Add Upsert Pattern to store_new_books() ✅ **COMPLETED**
 
-**Location:** `app/internal/book_search.py:545`
+**Location:** `app/internal/book_search.py:545-569`
 
-**Problem:**
-```python
-session.add_all(to_add + existing)  # Assumes perfect state
-session.commit()                     # No IntegrityError handling
-```
+**Status:** Fixed in commit `871b0cd` (2026-01-17)
 
-If database state is corrupted or concurrent operations occur, this can fail.
+**Implementation:** Merge pattern with graceful error recovery
 
-**Solution:**
-```python
-def store_new_books(session: Session, books: list[Audiobook]):
-    from sqlalchemy.exc import IntegrityError
+**Changes Made:**
+- Replaced `session.add_all()` with individual `session.merge()` calls for upsert-like behavior
+- Added IntegrityError exception handling with batch + individual fallback strategy
+- Batch merge first (fast path), then individual merge on conflict (slow path with logging)
+- Graceful degradation: logs warnings for duplicates but continues processing other books
 
-    for book in books:
-        try:
-            # Use merge for upsert-like behavior
-            session.merge(book)
-        except IntegrityError:
-            logger.warning(f"Skipping duplicate book: {book.asin}")
-            session.rollback()
-            continue
+**Approach:**
+1. Try batch merge + commit (optimistic)
+2. On IntegrityError, rollback and retry individual merges
+3. Skip duplicates with warning logs, continue with remaining books
 
-    try:
-        session.commit()
-    except IntegrityError as e:
-        session.rollback()
-        logger.error(f"Failed to commit books: {e}")
-        raise
-```
-
-**Effort:** 20 minutes
-**Risk:** Very Low - defensive programming
+**Files Modified:**
+- `app/internal/book_search.py`: Enhanced store_new_books() with merge pattern and error handling
 
 ---
 
