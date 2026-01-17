@@ -560,6 +560,7 @@ async def search_books(
                     fallback_book = Audiobook(
                         asin=fallback_asin,
                         title=p_result.title,
+                        subtitle=None,
                         authors=[p_result.author],
                         release_date=p_result.publish_date,
                         runtime_length_min=0,
@@ -591,6 +592,7 @@ async def search_books(
                     fallback_book = Audiobook(
                         asin=fallback_asin,
                         title=res.title,
+                        subtitle=None,
                         authors=[res.author],
                         release_date=res.publish_date,
                         runtime_length_min=0,
@@ -608,6 +610,9 @@ async def search_books(
             async with timing_context("Parallel fetch & verify"):
                 parallel_results = await asyncio.gather(*tasks, return_exceptions=True)
 
+            # Track seen virtual ASINs to prevent duplicate creation
+            seen_virtual_asins: set[str] = set()
+            
             for item in parallel_results:
                 if isinstance(item, Exception):
                     # Log the actual exception for debugging
@@ -622,6 +627,16 @@ async def search_books(
                     continue
 
                 book, prowlarr_result = item
+                
+                # Deduplicate virtual ASINs to prevent parallel creation conflicts
+                if book.asin.startswith("VIRTUAL-"):
+                    if book.asin in seen_virtual_asins:
+                        logger.debug(
+                            f"Skipping duplicate virtual ASIN: {book.asin} for '{book.title}'"
+                        )
+                        continue
+                    seen_virtual_asins.add(book.asin)
+                
                 if book.asin not in results_map:
                     book.prowlarr_count = prowlarr_result.seeders
                     book.freeleech = prowlarr_result.freeleech

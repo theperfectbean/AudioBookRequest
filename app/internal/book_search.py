@@ -7,7 +7,7 @@ from urllib.parse import urlencode
 from aiohttp import ClientSession
 from pydantic import BaseModel
 from sqlalchemy import CursorResult, delete
-from sqlalchemy.exc import InvalidRequestError
+from sqlalchemy.exc import IntegrityError, InvalidRequestError
 from sqlmodel import Session, col, not_, select
 
 from app.internal.env_settings import Settings
@@ -542,5 +542,28 @@ def store_new_books(session: Session, books: list[Audiobook]):
         existing_count=len(existing),
     )
 
-    session.add_all(to_add + existing)
-    session.commit()
+    # Use merge pattern for upsert-like behavior to handle race conditions
+    try:
+        for book in to_add + existing:
+            session.merge(book)
+        session.commit()
+    except IntegrityError as e:
+        session.rollback()
+        logger.error(
+            "Failed to commit books due to integrity constraint",
+            error=str(e),
+            book_count=len(to_add) + len(existing)
+        )
+        # Attempt individual merge to identify problematic books
+        for book in to_add + existing:
+            try:
+                session.merge(book)
+                session.commit()
+            except IntegrityError as book_error:
+                session.rollback()
+                logger.warning(
+                    f"Skipping duplicate book during storage",
+                    asin=book.asin,
+                    title=book.title,
+                    error=str(book_error)
+                )
