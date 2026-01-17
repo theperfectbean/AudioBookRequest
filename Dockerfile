@@ -16,15 +16,16 @@ RUN apk add --no-cache curl build-base && \
     chmod +x /bin/tailwindcss
 
 RUN mkdir -p static && \
-    curl -Lo static/daisyui.mjs https://github.com/saadeghi/daisyui/releases/latest/download/daisyui.mjs && \
-    curl -Lo static/daisyui-theme.mjs https://github.com/saadeghi/daisyui/releases/latest/download/daisyui-theme.mjs
+    curl -Lo static/daisyui.mjs https://github.com/saadeghi/daisyui/releases/download/3.13.6/daisyui.mjs && \
+    curl -Lo static/daisyui-theme.mjs https://github.com/saadeghi/daisyui/releases/download/3.13.6/daisyui-theme.mjs
 
 COPY templates/ templates/
 COPY static/tw.css static/tw.css
-RUN /bin/tailwindcss -i static/tw.css -o static/globals.css -m
+RUN /bin/tailwindcss -i static/tw.css -o static/globals.css -m && \
+    apk del --no-cache curl build-base
 
 # ---- Python deps ----
-FROM astral/uv:python3.14-alpine AS python-deps
+FROM astral/uv:python3.12-alpine AS python-deps
 WORKDIR /app
 COPY uv.lock pyproject.toml ./
 RUN uv sync --frozen --no-cache --no-dev
@@ -32,7 +33,7 @@ COPY app/util/fetch_js.py app/util/fetch_js.py
 RUN mkdir -p static && (/app/.venv/bin/python app/util/fetch_js.py || true)
 
 # ---- Final ----
-FROM python:3.14-alpine AS final
+FROM python:3.12-alpine AS final
 WORKDIR /app
 
 COPY --from=css /app/static/globals.css static/globals.css
@@ -49,5 +50,10 @@ COPY CHANGELOG.md CHANGELOG.md
 ENV ABR_APP__PORT=8000
 ARG VERSION
 ENV ABR_APP__VERSION=$VERSION
+
+EXPOSE 8000
+
+HEALTHCHECK --interval=30s --timeout=10s --retries=3 \
+  CMD wget -q --spider http://localhost:8000/health || exit 1
 
 CMD /app/.venv/bin/fastapi run --port $ABR_APP__PORT
