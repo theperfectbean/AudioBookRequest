@@ -14,6 +14,7 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from app.internal.env_settings import Settings
 from app.internal.models import Audiobook, MetadataCache
+from app.util.exceptions import handle_database_error, handle_external_api_error, handle_validation_error
 from app.util.log import logger
 
 
@@ -142,35 +143,14 @@ class GoogleBooksProvider:
             return EnrichedMetadata(**metadata_dict)
 
         except (json.JSONDecodeError, KeyError) as e:
-            logger.error(
-                f"Error parsing cached metadata",
-                error=str(e),
-                error_type=type(e).__name__,
-                search_key=search_key
-            )
+            handle_external_api_error(e, "MetadataCache", "parse cached data", search_key=search_key)
             return None
         except ValidationError as e:
-            logger.error(
-                f"Cached metadata validation failed",
-                error=str(e),
-                search_key=search_key
-            )
+            handle_validation_error(e, "cached metadata", search_key=search_key)
             return None
         except SQLAlchemyError as e:
-            logger.error(
-                f"Database error checking cache",
-                error=str(e),
-                error_type=type(e).__name__,
-                search_key=search_key
-            )
+            handle_database_error(e, "check cache", search_key=search_key)
             # Re-raise database errors so they can be handled by caller
-            raise
-        except Exception as e:
-            logger.exception(
-                f"Unexpected error checking cache",
-                search_key=search_key
-            )
-            # Re-raise unexpected errors for visibility
             raise
     
     async def store_cache(
@@ -212,21 +192,7 @@ class GoogleBooksProvider:
             )
             session.rollback()
         except SQLAlchemyError as e:
-            logger.error(
-                f"Database error storing cache",
-                error=str(e),
-                error_type=type(e).__name__,
-                search_key=search_key
-            )
-            session.rollback()
-        except Exception as e:
-            logger.exception(
-                f"Unexpected error storing cache",
-                search_key=search_key
-            )
-            session.rollback()
-            # Re-raise unexpected errors for visibility
-            raise
+            handle_database_error(e, "store cache", rollback_session=session, search_key=search_key)
     
     async def search_books(
         self, 
@@ -260,39 +226,14 @@ class GoogleBooksProvider:
                 return GoogleBooksResponse(**data)
 
         except ClientError as e:
-            logger.error(
-                f"Google Books API HTTP error",
-                error=str(e),
-                error_type=type(e).__name__,
-                title=title,
-                author=author
-            )
+            handle_external_api_error(e, "Google Books", "HTTP request", title=title, author=author)
             return None
         except (json.JSONDecodeError, KeyError) as e:
-            logger.error(
-                f"Error parsing Google Books API response",
-                error=str(e),
-                error_type=type(e).__name__,
-                title=title,
-                author=author
-            )
+            handle_external_api_error(e, "Google Books", "parse response", title=title, author=author)
             return None
         except ValidationError as e:
-            logger.error(
-                f"Google Books response validation failed",
-                error=str(e),
-                title=title,
-                author=author
-            )
+            handle_validation_error(e, "Google Books response", title=title, author=author)
             return None
-        except Exception as e:
-            logger.exception(
-                f"Unexpected Google Books API error",
-                title=title,
-                author=author
-            )
-            # Re-raise unexpected errors for visibility
-            raise
     
     async def search_books_with_fallbacks(
         self,

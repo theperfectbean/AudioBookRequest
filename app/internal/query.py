@@ -1,6 +1,7 @@
 # To determine what is currently being queried:
 from contextlib import contextmanager
 from datetime import datetime
+import json
 from typing import Literal
 
 import pydantic
@@ -97,7 +98,28 @@ async def query_sources(
                 book_asin=asin,
                 prowlarr_source=ranked[0],
             )
-            if resp.ok:
+            
+            # Check if download succeeded or was already downloaded (duplicate)
+            is_duplicate = False
+            if not resp.ok:
+                try:
+                    error_text = await resp.text()
+                    error_json = json.loads(error_text)
+                    error_msg = error_json.get("message", "").lower()
+                    error_description = error_json.get("description", "").lower()
+                    
+                    # Check for duplicate indicators
+                    if any(phrase in error_description or phrase in error_msg for phrase in [
+                        "duplicate torrent",
+                        "already exists",
+                        "failed to add torrent",  # Likely duplicate
+                    ]):
+                        is_duplicate = True
+                except (json.JSONDecodeError, AttributeError):
+                    pass
+            
+            if resp.ok or is_duplicate:
+                # Mark book as downloaded
                 same_books = session.exec(
                     select(Audiobook).where(Audiobook.asin == asin)
                 ).all()

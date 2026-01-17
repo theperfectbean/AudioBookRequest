@@ -64,6 +64,10 @@ async def read_search(
             available_only=available_only,
         )
         prowlarr_configured = prowlarr_config.is_valid(session)
+        
+        # Extract best_matches from ranked results (if ranking was applied)
+        best_matches = [r for r in results if getattr(r, 'is_best_match', False)]
+        
         return template_response(
             "search.html",
             request,
@@ -71,6 +75,7 @@ async def read_search(
             {
                 "search_term": query or "",
                 "search_results": results,
+                "best_matches": best_matches,
                 "regions": audible_regions,
                 "selected_region": region,
                 "page": page,
@@ -81,7 +86,10 @@ async def read_search(
             },
         )
     except Exception as e:
-        session.rollback()
+        try:
+            session.rollback()
+        except Exception as rollback_error:
+            logger.warning("Failed to rollback session", error=rollback_error)
         logger.exception("Error during search", error=e)
         raise HTTPException(status_code=500, detail="Internal server error") from e
 

@@ -130,7 +130,45 @@ In the case of an OIDC misconfiguration, i.e. changing a setting like your clien
 | `ABR_DB__POSTGRES_DB`         | Database name of the postgres instance.                                                                                                                                                                                                                      | audiobookrequest |
 | `ABR_DB__POSTGRES_USER`       | Username of the postgres database.                                                                                                                                                                                                                           | abr              |
 | `ABR_DB__POSTGRES_PASSWORD`   | Password of the postgres database.                                                                                                                                                                                                                           | password         |
-| `ABR_DB__POSTGRES_SSL_MODE`   | [SSL mode](https://www.postgresql.org/docs/18/libpq-connect.html#LIBPQ-CONNECT-SSLMODE) to use for the postgres instance.                                                                                                                                    | prefer           |
+| `ABR_DB__POSTGRES_SSL_MODE`   | [SSL mode](https://www.postgresql.org/docs/18/libpq-connect.html#LIBPQ-CONNECT-SSLMODE) to use for the postgres instance. **Production: Use `require` or stricter!**                                                                                         | prefer           |
+
+### Security Recommendations
+
+For production deployments, consider the following security best practices:
+
+1. **PostgreSQL SSL Mode**: Change `ABR_DB__POSTGRES_SSL_MODE` from the default `prefer` to `require` or stricter (e.g., `verify-ca`, `verify-full`). The default `prefer` mode allows fallback to unencrypted connections, which is insecure for production.
+
+   ```bash
+   ABR_DB__POSTGRES_SSL_MODE=require
+   ```
+
+2. **Database Credentials**: Change the default PostgreSQL credentials in production. Never use the defaults (`abr`/`password`) in production environments.
+
+   ```bash
+   # For ABR application
+   ABR_DB__POSTGRES_USER=your_secure_username
+   ABR_DB__POSTGRES_PASSWORD=your_secure_password
+
+   # For docker-compose psql service
+   POSTGRES_USER=your_secure_username
+   POSTGRES_PASSWORD=your_secure_password
+   ```
+
+3. **Environment Files**: Copy `.env.example` to `.env.local` and customize values. Never commit `.env.local` to version control as it contains sensitive credentials.
+
+4. **Initial Admin Credentials**: Set strong initial root credentials using environment variables:
+
+   ```bash
+   ABR_APP__INIT_ROOT_USERNAME=admin
+   ABR_APP__INIT_ROOT_PASSWORD=your_strong_password
+   ```
+
+5. **Disable Debug Mode**: Ensure debug mode is disabled in production:
+
+   ```bash
+   ABR_APP__DEBUG=false
+   ABR_APP__OPENAPI_ENABLED=false
+   ```
 
 #### Metadata Enrichment
 

@@ -4,14 +4,15 @@ from datetime import datetime
 from typing import Literal, TypedDict, cast
 from urllib.parse import urlencode
 
-from aiohttp import ClientSession
-from pydantic import BaseModel
+from aiohttp import ClientError, ClientSession
+from pydantic import BaseModel, ValidationError
 from sqlalchemy import CursorResult, delete
 from sqlalchemy.exc import IntegrityError, InvalidRequestError
 from sqlmodel import Session, col, not_, select
 
 from app.internal.env_settings import Settings
 from app.internal.models import Audiobook, AudiobookRequest
+from app.util.exceptions import handle_external_api_error
 from app.util.log import logger
 
 REFETCH_TTL = 60 * 60 * 24 * 7  # 1 week
@@ -100,8 +101,8 @@ async def _get_audnexus_book(
                 )
                 return None
             audnexus_response = _AudnexusResponse.model_validate(await response.json())
-    except Exception as e:
-        logger.error("Exception while fetching book from Audnexus", asin=asin, error=e)
+    except (ClientError, ValidationError, ValueError) as e:
+        handle_external_api_error(e, "Audnexus", "fetch book", asin=asin)
         return None
     return Audiobook(
         asin=audnexus_response.asin,
@@ -152,8 +153,8 @@ async def _get_audimeta_book(
                 )
                 return None
             audimeta_response = _AudimetaResponse.model_validate(await response.json())
-    except Exception as e:
-        logger.error("Exception while fetching book from Audimeta", asin=asin, error=e)
+    except (ClientError, ValidationError, ValueError) as e:
+        handle_external_api_error(e, "Audimeta", "fetch book", asin=asin)
         return None
     return Audiobook(
         asin=audimeta_response.asin,

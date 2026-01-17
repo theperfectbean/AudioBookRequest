@@ -107,6 +107,76 @@ The app queries Prowlarr for audiobook sources, ranks them by quality heuristics
 
 ## Implementation Journal
 
+### 2026-01-17: Critical Security and Database Integrity Fixes
+
+**What was built:** Comprehensive security hardening and database performance improvements addressing critical vulnerabilities identified during maintenance sweep.
+
+**Plan followed:** Phase 1 of Maintenance Plan (Critical Security & Correctness)
+
+**Files changed:**
+- `.env.example` - NEW: Comprehensive environment variable documentation with security warnings
+- `.gitignore` - Added `.env.local` to prevent credential exposure
+- `docker-compose.yml` - Replaced hardcoded credentials with environment variables
+- `README.md` - Added Security Recommendations section with PostgreSQL SSL mode guidance
+- `app/routers/search.py` - Fixed bare exception handler (line 91)
+- `app/internal/prowlarr/prowlarr.py` - Replaced assertions with proper validation (lines 66, 206)
+- `app/internal/book_search.py` - Specific exception handlers for Audnexus/Audimeta APIs
+- `app/internal/metadata/google_books.py` - Removed redundant generic exception handlers
+- `alembic/versions/99b1c4f5b85e_add_missing_fk_indexes.py` - NEW: Database indexes migration
+
+**Implementation details:**
+
+1. **Security Hardening**:
+   - Created `.env.example` template documenting all 30+ environment variables with defaults and security warnings
+   - Moved PostgreSQL credentials from hardcoded values to environment variables with fallback defaults
+   - Added `.env.local` to `.gitignore` to prevent accidental credential commits
+   - Documented PostgreSQL SSL mode security requirement (`prefer` → `require` for production)
+   - Added comprehensive security recommendations section to README.md
+
+2. **Exception Handling Improvements**:
+   - Fixed bare `except:` in search.py that caught all exceptions including SystemExit/KeyboardInterrupt
+   - Replaced unsafe `assert` statements in prowlarr.py with explicit validation and ValueError
+   - Added specific exception types (ClientError, ValidationError, ValueError) to book_search.py
+   - Removed redundant generic Exception handlers in google_books.py that only re-raised
+
+3. **Database Performance Optimizations**:
+   - Added index on `audiobookrequest.user_username` for efficient user-based queries
+   - Added index on `metadatacache.search_key` for metadata lookup optimization
+   - Documented index strategy: Composite primary keys (asin, user_username) efficiently index first column but not second
+
+4. **Index Strategy Documentation**:
+   - Composite primary key (asin, user_username) already indexes asin-only lookups
+   - Explicit index needed on user_username for queries filtering by user alone
+   - MetadataCache composite PK (search_key, provider) benefits from explicit search_key index
+   - Migration supports both PostgreSQL and SQLite
+
+**Why this approach:**
+- Environment variables prevent hardcoded credentials in version control
+- Specific exception handling prevents masking unexpected errors (SystemExit, KeyboardInterrupt)
+- Explicit validation (ValueError) works even with Python -O flag (which disables assertions)
+- Database indexes improve query performance for user-based filtering (wishlist, user requests)
+
+**Migration instructions:**
+```bash
+# Apply database indexes
+uv run alembic upgrade head
+
+# Create .env.local from template
+cp .env.example .env.local
+
+# Update production settings
+# - Set strong PostgreSQL credentials
+# - Change ABR_DB__POSTGRES_SSL_MODE=require
+# - Configure other environment variables as needed
+```
+
+**Security impact:**
+- Prevents credential leaks from hardcoded values
+- Ensures proper exception handling for error visibility
+- Improves database query performance (reduces N+1 query patterns)
+
+---
+
 ### 2026-01-17: Virtual Book Upgrade Race Condition Fix (Comprehensive)
 
 **What was built:** Fixed critical database integrity issue where concurrent virtual book upgrades could cause primary key violations, detached session objects, and lost user requests. Implemented database-level locking with comprehensive error recovery and request migration.

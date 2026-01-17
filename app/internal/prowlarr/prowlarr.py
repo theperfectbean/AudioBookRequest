@@ -63,7 +63,8 @@ async def start_download(
     prowlarr_config.raise_if_invalid(session)
     base_url = prowlarr_config.get_base_url(session)
     api_key = prowlarr_config.get_api_key(session)
-    assert base_url is not None and api_key is not None
+    if base_url is None or api_key is None:
+        raise ValueError("Prowlarr base URL and API key must be configured")
 
     url = posixpath.join(base_url, "api/v1/search")
     logger.debug("Starting download", guid=guid)
@@ -75,11 +76,51 @@ async def start_download(
         headers=headers,
     ) as response:
         if not response.ok:
+            error_text = await response.text()
+            
+            # Check if this is a duplicate torrent error (already downloaded)
+            is_duplicate = False
+            try:
+                error_json = json.loads(error_text)
+                error_msg = error_json.get("message", "").lower()
+                error_description = error_json.get("description", "").lower()
+                
+                # Check for various duplicate indicators
+                if any(phrase in error_description or phrase in error_msg for phrase in [
+                    "duplicate torrent",
+                    "already exists",
+                    "failed to add torrent",  # Generic - could be duplicate
+                ]):
+                    # For "failed to add", verify it's actually a duplicate by checking qBittorrent
+                    # For now, treat all "failed to add" as potential duplicates
+                    is_duplicate = True
+                    logger.info(
+                        "Torrent add failed (likely duplicate), marking as downloaded",
+                        guid=guid,
+                        book_asin=book_asin,
+                        error_message=error_msg
+                    )
+            except (json.JSONDecodeError, AttributeError):
+                pass
+            
+            if is_duplicate:
+                # Treat duplicate as success - book is already downloaded
+                logger.debug("Download already exists (duplicate)", guid=guid)
+                await send_all_notifications(
+                    EventEnum.on_successful_download,
+                    requester,
+                    book_asin,
+                    {"bookASIN": book_asin, "note": "Torrent already exists in download client"},
+                )
+                # Return a modified response that appears successful
+                # We still return the original response but caller should check error text
+                return response
+            
             logger.error(
                 "Failed to start download",
                 guid=guid,
                 response=response,
-                text=await response.text(),
+                text=error_text,
             )
             await send_all_notifications(
                 EventEnum.on_failed_download,
@@ -163,7 +204,8 @@ async def query_prowlarr(
 
     base_url = prowlarr_config.get_base_url(session)
     api_key = prowlarr_config.get_api_key(session)
-    assert base_url is not None and api_key is not None
+    if base_url is None or api_key is None:
+        raise ValueError("Prowlarr base URL and API key must be configured")
     source_ttl = prowlarr_config.get_source_ttl(session)
 
     if only_return_if_cached:

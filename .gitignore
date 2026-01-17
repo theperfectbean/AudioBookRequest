@@ -1,6 +1,7 @@
 .direnv
 .venv
 .env
+.env.local
 .envrc
 __pycache__
 config
@@ -9,3 +10,4 @@ result
 .ruff_cache
 .aider*
 .vscode/
+.claude-plans

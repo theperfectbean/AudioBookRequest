@@ -22,116 +22,106 @@
         {% block book_results %}
         <div id="book-results" class="min-w-[60vw] max-w-[90vw] sm:max-w-[80vw] h-full">
             {% if search_results and search_results[0].relevance_score is defined %}
-                <!-- Ranked results with sectioned display -->
-                {% set best_matches = search_results|selectattr("is_best_match")|list %}
-                
-                {% if best_matches %}
-                <div class="mb-6">
-                    <h2 class="text-xl font-bold mb-3 flex items-center gap-2">
-                        🎯 Best Matches for "{{ search_term }}"
-                        <span class="text-sm font-normal opacity-70">({{ best_matches|length }} results)</span>
-                    </h2>
-                    <div class="grid gap-1 gap-y-2 sm:gap-y-4 sm:gap-2 p-1 grid-flow-row grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6 2xl:grid-cols-7">
-                        {% for result in best_matches %}
-                        {% set book = result.book %}
-                        <div class="flex flex-col">
-                            <div class="relative w-32 h-32 sm:w-40 sm:h-40 rounded-md overflow-hidden shadow shadow-black items-center justify-center flex">
-                                {% if book.cover_image %}
-                                <img class="object-cover w-full h-full hover:scale-110 transition-transform duration-500 ease-in-out" height="128" width="128" src="{{ book.cover_image }}" alt="{{ book.title }}" />
-                                {% else %}
-                                {% include "icons/photo-off.html" %}
-                                {% endif %}
-                                
-                                <!-- Score badge -->
-                                <div class="absolute top-0 left-0 flex flex-col gap-0.5">
-                                    <div class="badge badge-info badge-xs rounded-none rounded-br-md px-1 font-bold" title="Relevance Score: {{ '%.1f'|format(result.relevance_score) }}">
-                                        {{ '%.0f'|format(result.relevance_score) }}
-                                    </div>
-                                    {% if book.prowlarr_count %}
-                                    <div class="badge badge-success badge-xs rounded-none rounded-br-md px-1">
-                                        {{ book.prowlarr_count }} seed{{ 's' if book.prowlarr_count != 1 else '' }}
-                                    </div>
-                                    {% endif %}
-                                    {% if book.freeleech %}
-                                    <div class="badge badge-warning badge-xs rounded-none rounded-br-md px-1 font-bold text-[0.6rem]">
-                                        FREELEECH
-                                    </div>
-                                    {% endif %}
-                                </div>
-                                
-                                <button class="absolute top-0 right-0 rounded-none rounded-bl-md btn-sm btn btn-square items-center justify-center flex {% if book.downloaded or result.already_requested %}btn-ghost bg-success text-neutral/20{% else %}btn-info{% endif %}" 
-                                        hx-post="{{ base_url }}/search/request/{{ book.asin }}" 
-                                        hx-disabled-elt="this" 
-                                        hx-target="#book-results" 
-                                        hx-include="this" 
-                                        hx-swap="outerHTML" 
-                                        hx-on:click="this.disabled = true;"
-                                        {% if book.downloaded or result.already_requested %}disabled{% endif %}>
-                                    <input type="hidden" name="query" value="{{ search_term }}" />
-                                    <input type="hidden" name="region" value="{{ selected_region }}" />
-                                    <input type="hidden" name="page" value="{{ page }}" />
-                                    <input type="hidden" name="search_term" value="{{ search_term }}" />
-                                    <input type="hidden" name="available_only" value="true" />
-                                    {% if book.downloaded or result.already_requested %}
-                                    <span>{% include "icons/checkmark.html" %}</span>
-                                    {% else %}
-                                    {% if auto_start_download and user.can_download() %}
-                                    <span>{% include "icons/download.html" %}</span>
-                                    {% else %}
-                                    <span>{% include "icons/plus.html" %}</span>
-                                    {% endif %}
-                                    {% endif %}
-                                </button>
-                            </div>
-                            {% if book.asin.startswith('PROWLARR-') %}
-                            <div class="text-sm font-bold pt-1 text-warning" title="Virtual book - tracker only">
-                                {{ book.title }}
-                                <span class="text-xs opacity-70">(tracker only)</span>
-                            </div>
-                            {% if book.subtitle %}
-                            <div class="opacity-80 font-semibold text-xs mt-1" title="Description">
-                                {{ book.subtitle }}
-                            </div>
-                            {% endif %}
+                <!-- Ranked results display (all results in grid) -->
+                <div class="grid gap-1 gap-y-2 sm:gap-y-4 sm:gap-2 p-1 grid-flow-row grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6 2xl:grid-cols-7">
+                    {% for result in search_results %}
+                    {% set book = result.book %}
+                    <div class="flex flex-col">
+                        <div class="relative w-32 h-32 sm:w-40 sm:h-40 rounded-md overflow-hidden shadow shadow-black items-center justify-center flex">
+                            {% if book.cover_image %}
+                            <img class="object-cover w-full h-full hover:scale-110 transition-transform duration-500 ease-in-out" height="128" width="128" src="{{ book.cover_image }}" alt="{{ book.title }}" />
                             {% else %}
-                            <a class="text-sm text-primary font-bold pt-1" title="Title" target="_blank" href="https://audible{{ regions[selected_region] }}/pd/{{ book.asin }}?ipRedirectOverride=true">
-                                {{ book.title }}
-                            </a>
-                            {% if book.subtitle %}
-                            <div class="opacity-60 font-semibold text-xs" title="Subtitle">{{ book.subtitle }}</div>
+                            {% include "icons/photo-off.html" %}
                             {% endif %}
-                            {% endif %}
-                            <div class="text-xs font-semibold" title="Authors">
-                                {% for author in book.authors %}
-                                <a href="{{ base_url }}/search?q={{ author }}" title="Search for {{ author }}">
-                                    {{ author }}{{- "," if loop.index < book.authors | length else "" -}}
-                                </a>
-                                {% endfor %}
+                            
+                            <!-- Score badge -->
+                            <div class="absolute top-0 left-0 flex flex-col gap-0.5">
+                                <div class="badge badge-info badge-xs rounded-none rounded-br-md px-1 font-bold" title="Relevance Score: {{ '%.1f'|format(result.relevance_score) }}">
+                                    {{ '%.0f'|format(result.relevance_score) }}
+                                </div>
+                                {% if book.prowlarr_count %}
+                                <div class="badge badge-success badge-xs rounded-none rounded-br-md px-1">
+                                    {{ book.prowlarr_count }} seed{{ 's' if book.prowlarr_count != 1 else '' }}
+                                </div>
+                                {% endif %}
+                                {% if book.freeleech %}
+                                <div class="badge badge-warning badge-xs rounded-none rounded-br-md px-1 font-bold text-[0.6rem]">
+                                    FREELEECH
+                                </div>
+                                {% endif %}
                             </div>
                             
-                            <!-- Match type indicator -->
-                            <div class="text-xs opacity-70 mt-1 flex items-center gap-1" title="{{ result.match_explanation }}">
-                                <span class="w-1.5 h-1.5 rounded-full bg-info"></span>
-                                {{ result.match_type }} match
-                            </div>
-                            
-                            <!-- Enriched metadata indicators for virtual books -->
-                            {% if book.asin.startswith('PROWLARR-') and book.cover_image %}
-                            <div class="text-xs opacity-60 mt-1 flex items-center gap-1">
-                                <span class="w-1.5 h-1.5 rounded-full bg-info"></span>
-                                Google Books enriched
-                            </div>
-                            {% endif %}
+                            <button class="absolute top-0 right-0 rounded-none rounded-bl-md btn-sm btn btn-square items-center justify-center flex {% if book.downloaded or result.already_requested %}btn-ghost bg-success text-neutral/20{% else %}btn-info{% endif %}" 
+                                    hx-post="{{ base_url }}/search/request/{{ book.asin }}" 
+                                    hx-disabled-elt="this" 
+                                    hx-target="#book-results" 
+                                    hx-include="this" 
+                                    hx-swap="outerHTML" 
+                                    hx-on:click="this.disabled = true;"
+                                    {% if book.downloaded or result.already_requested %}disabled{% endif %}>
+                                <input type="hidden" name="query" value="{{ search_term }}" />
+                                <input type="hidden" name="region" value="{{ selected_region }}" />
+                                <input type="hidden" name="page" value="{{ page }}" />
+                                <input type="hidden" name="search_term" value="{{ search_term }}" />
+                                <input type="hidden" name="available_only" value="true" />
+                                {% if book.downloaded or result.already_requested %}
+                                <span>{% include "icons/checkmark.html" %}</span>
+                                {% else %}
+                                {% if auto_start_download and user.can_download() %}
+                                <span>{% include "icons/download.html" %}</span>
+                                {% else %}
+                                <span>{% include "icons/plus.html" %}</span>
+                                {% endif %}
+                                {% endif %}
+                            </button>
                         </div>
-                        {% endfor %}
+                        {% if book.asin.startswith('PROWLARR-') %}
+                        <div class="text-sm font-bold pt-1 text-warning" title="Virtual book - tracker only">
+                            {{ book.title }}
+                            <span class="text-xs opacity-70">(tracker only)</span>
+                        </div>
+                        {% if book.subtitle %}
+                        <div class="opacity-80 font-semibold text-xs mt-1" title="Description">
+                            {{ book.subtitle }}
+                        </div>
+                        {% endif %}
+                        {% else %}
+                        <a class="text-sm text-primary font-bold pt-1" title="Title" target="_blank" href="https://audible{{ regions[selected_region] }}/pd/{{ book.asin }}?ipRedirectOverride=true">
+                            {{ book.title }}
+                        </a>
+                        {% if book.subtitle %}
+                        <div class="opacity-60 font-semibold text-xs" title="Subtitle">{{ book.subtitle }}</div>
+                        {% endif %}
+                        {% endif %}
+                        <div class="text-xs font-semibold" title="Authors">
+                            {% for author in book.authors %}
+                            <a href="{{ base_url }}/search?q={{ author }}" title="Search for {{ author }}">
+                                {{ author }}{{- "," if loop.index < book.authors | length else "" -}}
+                            </a>
+                            {% endfor %}
+                        </div>
+                        
+                        <!-- Match type indicator -->
+                        <div class="text-xs opacity-70 mt-1 flex items-center gap-1" title="{{ result.match_explanation }}">
+                            <span class="w-1.5 h-1.5 rounded-full bg-info"></span>
+                            {{ result.match_type }} match
+                        </div>
+                        
+                        <!-- Enriched metadata indicators for virtual books -->
+                        {% if book.asin.startswith('PROWLARR-') and book.cover_image %}
+                        <div class="text-xs opacity-60 mt-1 flex items-center gap-1">
+                            <span class="w-1.5 h-1.5 rounded-full bg-info"></span>
+                            Google Books enriched
+                        </div>
+                        {% endif %}
                     </div>
+                    {% endfor %}
                 </div>
-                {% endif %}
                 
-                <!-- Show "No exact matches" message if there are results but no best matches -->
-                {% if search_results and not best_matches %}
+                <!-- Show "No matches" message only if results list is truly empty -->
+                {% if not search_results %}
                 <div class="pt-8 flex flex-col gap-1 items-center justify-center text-center max-w-[20rem]">
-                    <span class="text-xl font-semibold">No exact matches found</span>
+                    <span class="text-xl font-semibold">No matches found</span>
                     <span class="text-sm">
                         No audiobooks found by "{{ search_term }}" on trackers. 
                         Try searching for just the author's last name or a different spelling.
