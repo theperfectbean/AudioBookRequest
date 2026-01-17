@@ -2,7 +2,7 @@ import asyncio
 from typing import Awaitable
 
 from app.internal.indexers.abstract import SessionContainer
-from app.internal.indexers.indexer_util import get_indexer_contexts
+from app.internal.indexers.indexer_util import IndexerContext, get_indexer_contexts
 from app.internal.models import Audiobook, ProwlarrSource
 from app.util.log import logger
 
@@ -25,7 +25,7 @@ async def edit_source_metadata(
     # Helper function to find matching indexer for a source
     async def find_matching_indexer(
         source: ProwlarrSource,
-    ) -> tuple[ProwlarrSource, type] | None:
+    ) -> tuple[ProwlarrSource, IndexerContext] | None:
         for context in contexts:
             try:
                 if await context.indexer.is_matching_source(source, container):

@@ -161,19 +161,15 @@ def verify_match(
     a_authors_norm = normalize_text(" ".join(a_result.authors))
 
     logger.info(
-        f"VERIFY_MATCH START | "
-        f"Prowlarr: '{p_result.title}' by '{p_result.author}' | "
-        f"Audible: '{a_result.title}' by {a_result.authors} | "
-        f"Search Query: '{search_query}'"
+        f"VERIFY_MATCH START | Prowlarr: '{p_result.title}' by '{p_result.author}' | "
+        + f"Audible: '{a_result.title}' by {a_result.authors} | Search Query: '{search_query}'"
     )
 
     # Tier 0: Fast path - exact match
     if p_title_norm == a_title_norm and p_author_norm == a_authors_norm:
         logger.info(
-            f"✅ ACCEPTED | "
-            f"P: '{p_result.title}' | "
-            f"A: '{a_result.title}' by {a_result.authors} | "
-            f"Scores: title=100.0, author=100.0"
+            f"✅ ACCEPTED | P: '{p_result.title}' | A: '{a_result.title}' by {a_result.authors} | "
+            + f"Scores: title=100.0, author=100.0"
         )
         return True
 
@@ -227,19 +223,15 @@ def verify_match(
     # Users often search by title only, so we shouldn't reject based on author-vs-query
     if is_match:
         logger.info(
-            f"✅ ACCEPTED | "
-            f"P: '{p_result.title}' | "
-            f"A: '{a_result.title}' by {a_result.authors} | "
-            f"Scores: title={title_score:.1f}, author={author_score:.1f}"
+            f"✅ ACCEPTED | P: '{p_result.title}' | A: '{a_result.title}' by {a_result.authors} | "
+            + f"Scores: title={title_score:.1f}, author={author_score:.1f}"
         )
         return True
     else:
         logger.warning(
-            f"❌ REJECTED | "
-            f"P: '{p_result.title}' | "
-            f"A: '{a_result.title}' by {a_result.authors} | "
-            f"Reason: {'title mismatch' if not title_match else 'author mismatch'} | "
-            f"Scores: title={title_score:.1f}, author={author_score:.1f}"
+            f"❌ REJECTED | P: '{p_result.title}' | A: '{a_result.title}' by {a_result.authors} | "
+            + f"Reason: {'title mismatch' if not title_match else 'author mismatch'} | "
+            + f"Scores: title={title_score:.1f}, author={author_score:.1f}"
         )
         return False
 
@@ -247,7 +239,7 @@ def verify_match(
 def verify_match_relaxed(
     p_result: ProwlarrSearchResultProtocol,
     a_result: AudiobookProtocol,
-    search_query: str | None = None,
+    search_query: str | None = None,  # noqa: ARG001 - kept for API consistency
 ) -> bool:
     """
     Relaxed version of verify_match with lower thresholds.
@@ -310,10 +302,8 @@ def verify_match_relaxed(
         return True
     else:
         logger.debug(
-            f"❌ RELAXED MATCH REJECTED | "
-            f"P: '{p_result.title}' | "
-            f"A: '{a_result.title}' by {a_result.authors} | "
-            f"Scores: title={title_score:.1f}, author={author_score:.1f}"
+            f"❌ RELAXED MATCH REJECTED | P: '{p_result.title}' | A: '{a_result.title}' by {a_result.authors} | "
+            + f"Scores: title={title_score:.1f}, author={author_score:.1f}"
         )
         return False
 
