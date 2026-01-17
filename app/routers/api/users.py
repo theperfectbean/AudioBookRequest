@@ -2,6 +2,7 @@ from typing import Annotated, List
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Security, status
 from pydantic import BaseModel, Field
+from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, func, select
 
 from app.internal.auth.authentication import (
@@ -12,6 +13,7 @@ from app.internal.auth.authentication import (
 )
 from app.internal.models import GroupEnum, User
 from app.util.db import get_session
+from app.util.log import logger
 
 router = APIRouter(prefix="/users", tags=["Users"])
 
@@ -150,6 +152,12 @@ def create_new_user(
         session.commit()
 
         return UserResponse.from_user(user)
+    except IntegrityError:
+        session.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Username already exists",
+        )
     except HTTPException:
         session.rollback()
         raise
@@ -216,6 +224,12 @@ def update_user(
         session.commit()
 
         return UserResponse.from_user(user)
+    except IntegrityError:
+        session.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Username already exists",
+        )
     except HTTPException:
         session.rollback()
         raise
@@ -259,6 +273,12 @@ def delete_user(
     try:
         session.delete(user)
         session.commit()
+    except IntegrityError:
+        session.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Cannot delete user due to referential integrity constraints",
+        )
     except HTTPException:
         session.rollback()
         raise
