@@ -441,6 +441,7 @@ class TestRateLimiting:
             mock_settings_instance = MagicMock()
             mock_settings_instance.app.enable_metadata_enrichment = False
             mock_settings_instance.app.enable_author_relevance_ranking = False
+            mock_settings_instance.app.max_concurrent_audible_requests = 5
             mock_settings.return_value = mock_settings_instance
 
             mock_get_session.return_value.__next__.return_value = mock_db_session
@@ -504,6 +505,7 @@ class TestIntegration:
             mock_settings_instance.app.enable_author_relevance_ranking = True
             mock_settings_instance.app.author_match_threshold = 70.0
             mock_settings_instance.app.enable_secondary_scoring = True
+            mock_settings_instance.app.max_concurrent_audible_requests = 5
             mock_settings_class.return_value = mock_settings_instance
 
             mock_get_session.return_value.__next__.return_value = mock_db_session
@@ -575,6 +577,7 @@ class TestIntegration:
             mock_settings_instance = MagicMock()
             mock_settings_instance.app.enable_metadata_enrichment = False
             mock_settings_instance.app.enable_author_relevance_ranking = False
+            mock_settings_instance.app.max_concurrent_audible_requests = 5
             mock_settings_class.return_value = mock_settings_instance
 
             mock_get_session.return_value.__next__.return_value = mock_db_session
@@ -639,6 +642,7 @@ class TestIntegration:
             mock_settings_instance = MagicMock()
             mock_settings_instance.app.enable_metadata_enrichment = False
             mock_settings_instance.app.enable_author_relevance_ranking = False
+            mock_settings_instance.app.max_concurrent_audible_requests = 5
             mock_settings_class.return_value = mock_settings_instance
 
             mock_get_session.return_value.__next__.return_value = mock_db_session
@@ -784,6 +788,7 @@ class TestIntegration:
             mock_settings_instance = MagicMock()
             mock_settings_instance.app.enable_metadata_enrichment = False
             mock_settings_instance.app.enable_author_relevance_ranking = False
+            mock_settings_instance.app.max_concurrent_audible_requests = 5
             mock_settings_class.return_value = mock_settings_instance
 
             mock_get_session.return_value.__next__.return_value = mock_db_session
@@ -1021,6 +1026,7 @@ class TestPerformance:
             mock_settings_instance = MagicMock()
             mock_settings_instance.app.enable_metadata_enrichment = False
             mock_settings_instance.app.enable_author_relevance_ranking = False
+            mock_settings_instance.app.max_concurrent_audible_requests = 5
             mock_settings_class.return_value = mock_settings_instance
 
             mock_get_session.return_value.__next__.return_value = mock_db_session
