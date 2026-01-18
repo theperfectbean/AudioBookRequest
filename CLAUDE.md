@@ -109,7 +109,55 @@ The app queries Prowlarr for audiobook sources, ranks them by quality heuristics
 
 Detailed implementation history is maintained in [IMPLEMENTATION_JOURNAL.md](./IMPLEMENTATION_JOURNAL.md).
 
-### Recent Changes (Last 2 Weeks)
+### Recent Changes (Last 3 Days)
+
+**2026-01-18: Phase 7 Complete - Database Integrity Fixes**
+- Added IntegrityError handling to forms login last_login update (auth.py:148-155)
+  - Gracefully handles race conditions with warning log
+  - Request succeeds even if timestamp update fails
+- Added IntegrityError handling to APIKey creation (account.py:64-73)
+  - Returns 400 error with user-friendly message on conflict
+  - Prevents 500 errors on concurrent key creation
+- All 340 tests passing, 0 regressions, no new type errors
+- See .claude-plans/phase-7-integrity-fixes.md for details
+
+**2026-01-18: Phase 6 Complete - Code Quality Refactoring**
+- Refactored nested async functions in search_books (6.1): Extracted 3 nested functions to module-level helpers
+  - `_try_search_strategy()` - Search strategy executor (lines 408-445)
+  - `_fetch_and_verify_prowlarr_result()` - Prowlarr result verification (lines 448-580)
+  - `_fetch_with_timeout_helper()` - Timeout handler with fallback (lines 583-610)
+  - Reduced nesting from 4+ levels to 2 levels in search_books handler
+- Fixed unsafe dynamic attribute access (6.3): Replaced setattr/getattr loop with explicit assignments (line 769)
+- All 340 tests passing, 0 regressions
+- Type check baseline: 192 errors (pre-existing, no new errors introduced)
+
+**2026-01-18: Phase 5.3 Complete - Async Mocking Fix**
+- Fixed async HTTP mocking in test_book_search.py using aioresponses library
+- Replaced all manual AsyncMock patterns with proper aioresponses URL-based mocking
+- Updated 21+ async test methods across 5 test classes (TestGetBookByAsin, TestListAudibleBooks, TestListPopularBooks, TestSearchSuggestions, TestConcurrentSearches)
+- Conftest fixture now provides real ClientSession with aioresponses interception via `session._mocked`
+- Added aioresponses>=0.7.6 to test dependencies
+- All 53 tests passing (0.56 seconds) - fixed TypeError in async context manager protocol
+- Benefits: proper async semantics, cleaner test code, standard library for aiohttp testing
+- See .claude-plans/phase-5.3-async-mocking.md for details
+
+**2026-01-18: Phase 4.3 Complete - Database Connection Pool Tuning**
+- Added SQLAlchemy connection pool configuration (pool_size, max_overflow, pool_timeout, pool_pre_ping)
+- Implemented pool health monitoring (startup logging, connection event listeners)
+- Enhanced `app/internal/env_settings.py` with 4 new pool parameters
+- Updated `app/util/db.py` to apply pool configuration to both SQLite and PostgreSQL
+- Verified pool handles 15+ concurrent requests without exhaustion
+- Added comprehensive documentation: configuration guide, troubleshooting table, monitoring queries
+- Test coverage: 328/340 passing (96.5%), 0 new failures (see fluffy-tinkering-lightning-PHASE-4-3-COMPLETION.md)
+
+**2026-01-18: Phase 4.1-4.2 Complete - Infrastructure & Logging**
+- Phase 4.1: Verified Docker/CI/CD already production-ready (Python 3.12-alpine, healthcheck, v4 actions)
+- Phase 4.2: Implemented structured logging with JSON formatting, correlation IDs, file rotation
+  - Enhanced `app/util/log.py` with configurable formatters
+  - Added `log_format` and `log_file` to environment settings
+  - Implemented correlation ID middleware in `app/main.py`
+  - Removed emoji from logs for production safety
+- Test coverage: 328/340 passing (96.5%), 0 new failures
 
 **2026-01-18: Phase 3 Complete - Code Quality & Caching**
 - Enhanced SimpleCache with LRU eviction and metrics tracking

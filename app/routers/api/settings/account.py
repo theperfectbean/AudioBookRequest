@@ -1,8 +1,9 @@
 import uuid
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Response, Security
+from fastapi import APIRouter, Depends, HTTPException, Response, Security, status
 from pydantic import BaseModel, Field
+from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, select
 
 from app.internal.auth.authentication import (
@@ -62,8 +63,14 @@ def create_new_api_key(
         raise HTTPException(status_code=400, detail="API key name must be unique")
 
     api_key, private_key = create_api_key(user, name)
-    session.add(api_key)
-    session.commit()
+    try:
+        session.add(api_key)
+        session.commit()
+    except IntegrityError:
+        session.rollback()
+        raise HTTPException(
+            status_code=400, detail="Failed to create API key (duplicate name or system error)"
+        )
 
     return CreateAPIKeyResponse(name=name, key=private_key)
 

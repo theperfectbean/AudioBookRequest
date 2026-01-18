@@ -19,6 +19,7 @@ from fastapi import (
 )
 from fastapi.security import OAuth2PasswordRequestForm
 from pydantic import BaseModel
+from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, select
 
 from app.internal.auth.authentication import (
@@ -146,8 +147,12 @@ def login_access_token(
 
     # Update last_login timestamp
     user.last_login = datetime.now()
-    session.add(user)
-    session.commit()
+    try:
+        session.add(user)
+        session.commit()
+    except IntegrityError:
+        session.rollback()
+        logger.warning("Concurrent last_login update during forms login", username=form_data.username)
 
     request.session["sub"] = form_data.username
     return Response(
