@@ -330,7 +330,7 @@ class GoogleBooksProvider:
         cached = await self.check_cache(session, search_key)
         
         if cached:
-            logger.info(f"📚 Using cached metadata for {book.asin}")
+            logger.info(f"Using cached metadata for {book.asin}")
             # Apply cached metadata
             if cached.cover_image and not book.cover_image:
                 book.cover_image = cached.cover_image
@@ -348,11 +348,11 @@ class GoogleBooksProvider:
         
         # Not in cache, search API with fallback strategies
         try:
-            logger.info(f"🔍 Enriching virtual book: '{book.title}' by {book.authors[0]}")
+            logger.info(f"Enriching virtual book: '{book.title}' by {book.authors[0]}")
             response = await self.search_books_with_fallbacks(client_session, book.title, book.authors[0])
 
             if not response or not response.items:
-                logger.warning(f"❌ No Google Books results for '{book.title}' after all fallback strategies")
+                logger.warning(f"No Google Books results for '{book.title}' after all fallback strategies")
                 # Store empty result in cache to avoid repeated lookups
                 empty_metadata = EnrichedMetadata()
                 await self.store_cache(session, search_key, empty_metadata)
@@ -390,7 +390,7 @@ class GoogleBooksProvider:
             # Apply to book
             if cover_image and not book.cover_image:
                 book.cover_image = cover_image
-                logger.info(f"✅ Added cover image for {book.asin}")
+                logger.info(f"Added cover image for {book.asin}")
 
             if volume_info.description:
                 # Store description in subtitle field
@@ -426,7 +426,7 @@ class GoogleBooksProvider:
             # Return original book on validation error
             return book
         
-        logger.info(f"✅ Enriched virtual book: {book.asin}")
+        logger.info(f"Enriched virtual book: {book.asin}")
         return book
     
     async def clear_cache(

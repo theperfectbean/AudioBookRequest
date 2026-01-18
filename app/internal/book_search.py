@@ -375,7 +375,7 @@ async def list_popular_books(
         timestamp=time.time(),
     )
 
-    logger.info(f"📚 POPULAR BOOKS | Found {len(ordered)} books")
+    logger.info(f"POPULAR BOOKS | Found {len(ordered)} books")
 
     return ordered
 
@@ -482,7 +482,7 @@ async def list_audible_books(
     )
 
     logger.info(
-        f"📚 AUDIBLE API RESULTS | Query: '{query}' | Found {len(ordered)} books"
+        f"AUDIBLE API RESULTS | Query: '{query}' | Found {len(ordered)} books"
     )
     for idx, book in enumerate(ordered[:5]):
         logger.info(f"  [{idx+1}] '{book.title}' by {book.authors} | ASIN: {book.asin}")

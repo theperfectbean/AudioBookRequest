@@ -9,6 +9,7 @@ from unittest.mock import Mock, AsyncMock, patch
 
 import pytest
 from aiohttp import ClientSession
+from aioresponses import aioresponses
 from sqlmodel import SQLModel, create_engine, Session
 
 from app.internal.models import Audiobook, ProwlarrSource, TorrentSource, User, GroupEnum
@@ -41,22 +42,22 @@ def event_loop():
     loop.close()
 
 
-# Mock HTTP session fixture
+# Async HTTP mocking fixtures
 @pytest.fixture(scope="function")
 async def mock_client_session() -> AsyncGenerator[ClientSession, None]:
-    """Provide a mock ClientSession for HTTP calls."""
-    session = AsyncMock(spec=ClientSession)
-    
-    # Mock the context manager
-    session.__aenter__ = AsyncMock(return_value=session)
-    session.__aexit__ = AsyncMock(return_value=None)
-    
-    # Mock get method
-    session.get = AsyncMock()
-    
-    yield session
-    
-    await session.close()
+    """Provide a real ClientSession with aioresponses mocking for HTTP calls."""
+    with aioresponses() as mocked:
+        async with ClientSession() as session:
+            # Attach mocked responses to session for easy access in tests
+            session._mocked = mocked
+            yield session
+
+
+@pytest.fixture(scope="function")
+def aioresponses_mocker() -> Generator[aioresponses, None, None]:
+    """Provide aioresponses context manager for manual HTTP mocking."""
+    with aioresponses() as mocked:
+        yield mocked
 
 
 # Sample data fixtures

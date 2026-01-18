@@ -52,7 +52,7 @@ async def timing_context(operation: str):
         yield
     finally:
         duration = time.perf_counter() - start
-        logger.info(f"⏱️ {operation} took {duration:.2f}s")
+        logger.info(f"{operation} took {duration:.2f}s", operation=operation, duration_seconds=duration)
 
 
 def generate_virtual_asin(title: str, author: str) -> str:
@@ -97,14 +97,14 @@ def extract_asin_from_prowlarr(p_result: ProwlarrSearchResult) -> Optional[str]:
     if p_result.guid:
         match = re.search(asin_pattern, p_result.guid)
         if match:
-            logger.info(f"🎯 Found ASIN in GUID: {match.group(0)}")
+            logger.info(f"Found ASIN in GUID: {match.group(0)}")
             return match.group(0)
     
     # Check description/comments
     if hasattr(p_result, 'description') and p_result.description:
         match = re.search(asin_pattern, p_result.description)
         if match:
-            logger.info(f"🎯 Found ASIN in description: {match.group(0)}")
+            logger.info(f"Found ASIN in description: {match.group(0)}")
             return match.group(0)
     
     # Check info URL for Audible link
@@ -112,7 +112,7 @@ def extract_asin_from_prowlarr(p_result: ProwlarrSearchResult) -> Optional[str]:
         # Match: https://www.audible.com/pd/*/B002V00TOO
         url_match = re.search(r'audible\.com/pd/[^/]+/(' + asin_pattern + ')', p_result.info_url)
         if url_match:
-            logger.info(f"🎯 Found ASIN in URL: {url_match.group(1)}")
+            logger.info(f"Found ASIN in URL: {url_match.group(1)}")
             return url_match.group(1)
     
     return None
@@ -134,7 +134,7 @@ async def upgrade_virtual_book_if_better_match(
         return None
     
     logger.info(
-        f"🔄 Checking for upgrade of virtual book: '{existing_book.title}' | "
+        f"Checking for upgrade of virtual book: '{existing_book.title}' | "
         f"ASIN: {existing_book.asin}"
     )
     
@@ -144,7 +144,7 @@ async def upgrade_virtual_book_if_better_match(
         real_book = await get_book_by_asin(client_session, asin, region)
         if real_book:
             logger.info(
-                f"✅ UPGRADE FOUND: Virtual book upgraded to real ASIN | "
+                f"UPGRADE FOUND: Virtual book upgraded to real ASIN | "
                 f"Old: {existing_book.asin} → New: {asin}"
             )
             return real_book
@@ -169,7 +169,7 @@ async def upgrade_virtual_book_if_better_match(
             # Try strict matching first
             if verify_match(p_result, a_result):
                 logger.info(
-                    f"✅ UPGRADE FOUND (Strategy {idx+1}): Virtual book upgraded | "
+                    f"UPGRADE FOUND (Strategy {idx+1}): Virtual book upgraded | "
                     f"Old: {existing_book.asin} → New: {a_result.asin}"
                 )
                 return a_result
@@ -177,7 +177,7 @@ async def upgrade_virtual_book_if_better_match(
             # Try relaxed matching
             if verify_match_relaxed(p_result, a_result):
                 logger.warning(
-                    f"⚠️ UPGRADE FOUND (Relaxed): Virtual book upgraded | "
+                    f"UPGRADE FOUND (Relaxed): Virtual book upgraded | "
                     f"Old: {existing_book.asin} → New: {a_result.asin}"
                 )
                 return a_result
@@ -404,6 +404,190 @@ async def check_and_upgrade_virtual_book_cached(
     return result
 
 
+async def _try_search_strategy(
+    session: Session,
+    client_session: ClientSession,
+    p_result: ProwlarrSearchResult,
+    strategy_name: str,
+    search_query: str,
+    strict: bool,
+    original_query: str,
+) -> tuple[Audiobook, ProwlarrSearchResult] | None:
+    """
+    Try a single search strategy to match Prowlarr result to Audible book.
+    Helper function extracted from search_books to reduce nesting.
+    """
+    try:
+        potential_matches = await list_audible_books(
+            session=session,
+            client_session=client_session,
+            query=search_query,
+            num_results=10,
+            audible_region="us",  # Default region, should be passed
+        )
+
+        verify_fn = verify_match if strict else verify_match_relaxed
+        for a_result in potential_matches:
+            if verify_fn(p_result, a_result, search_query=original_query):
+                logger.info(
+                    f"{'VERIFIED' if strict else 'RELAXED'} MATCH ({strategy_name}) | "
+                    f"Prowlarr: '{p_result.title}' by '{p_result.author}' | "
+                    f"Audible: '{a_result.title}' by {a_result.authors}"
+                )
+                return (a_result, p_result)
+    except Exception as e:
+        logger.warning(f"Strategy {strategy_name} failed: {e}")
+    return None
+
+
+async def _fetch_and_verify_prowlarr_result(
+    session: Session,
+    client_session: ClientSession,
+    p_result: ProwlarrSearchResult,
+    semaphore: asyncio.Semaphore,
+    original_query: str,
+    region: str,
+) -> tuple[Audiobook, ProwlarrSearchResult] | None:
+    """
+    Fetch and verify a Prowlarr result against Audible metadata.
+    Helper function extracted from search_books to reduce nesting.
+    """
+    async with semaphore:
+        logger.info(
+            f"FETCH_AND_VERIFY START | "
+            f"Prowlarr: '{p_result.title}' by '{p_result.author}' | "
+            f"GUID: {p_result.guid}"
+        )
+
+        # Step 0: Check if we have an existing virtual book that can be upgraded
+        existing_upgraded = await check_and_upgrade_virtual_book_cached(
+            session, client_session, p_result, region
+        )
+        if existing_upgraded:
+            logger.info(
+                f"UPGRADED EXISTING VIRTUAL BOOK | "
+                f"Prowlarr: '{p_result.title}' | "
+                f"New ASIN: {existing_upgraded.asin}"
+            )
+            return (existing_upgraded, p_result)
+
+        # Step 1: Try to extract ASIN from Prowlarr metadata
+        asin = extract_asin_from_prowlarr(p_result)
+        if asin:
+            book = await get_book_by_asin(client_session, asin, region)
+            if book:
+                logger.info(
+                    f"DIRECT ASIN MATCH | "
+                    f"Prowlarr: '{p_result.title}' | "
+                    f"ASIN: {asin} | "
+                    f"Audible: '{book.title}'"
+                )
+                return (book, p_result)
+
+        # Step 2: Try enhanced search strategies in parallel
+        strategies = [
+            ("title + author", f"{p_result.title} {p_result.author}"),
+            ("primary title only", normalize_text(p_result.title, primary_only=True)),
+            ("quoted title + author", f'"{p_result.title}" {p_result.author}'),
+        ]
+
+        # Create tasks for all strategies (strict + relaxed fallback)
+        tasks = []
+        for strategy_name, search_query in strategies:
+            tasks.append(
+                _try_search_strategy(
+                    session,
+                    client_session,
+                    p_result,
+                    strategy_name,
+                    search_query,
+                    strict=True,
+                    original_query=original_query,
+                )
+            )
+        # Add relaxed strategy as fallback
+        tasks.append(
+            _try_search_strategy(
+                session,
+                client_session,
+                p_result,
+                "relaxed",
+                strategies[0][1],
+                strict=False,
+                original_query=original_query,
+            )
+        )
+
+        # Return first successful match
+        for coro in asyncio.as_completed(tasks):
+            result = await coro
+            if result:
+                # Cancel remaining tasks
+                for task in tasks:
+                    if isinstance(task, asyncio.Task) and not task.done():
+                        task.cancel()
+                return result
+
+        # Step 3: No match found - create virtual book
+        fallback_asin = generate_virtual_asin(p_result.title, p_result.author)
+        fallback_book = Audiobook(
+            asin=fallback_asin,
+            title=p_result.title,
+            subtitle=None,
+            authors=[p_result.author],
+            release_date=p_result.publish_date,
+            runtime_length_min=0,
+            cover_image=None,
+        )
+        logger.warning(
+            f"VIRTUAL BOOK CREATED | "
+            f"Title: '{p_result.title}' | "
+            f"Author: '{p_result.author}' | "
+            f"ASIN: {fallback_asin} | "
+            f"Reason: No match found after all strategies"
+        )
+        return (fallback_book, p_result)
+
+
+async def _fetch_with_timeout_helper(
+    res: ProwlarrSearchResult,
+    semaphore: asyncio.Semaphore,
+    fetch_fn,
+    original_query: str,
+    region: str,
+    session: Session,
+    client_session: ClientSession,
+) -> tuple[Audiobook, ProwlarrSearchResult] | None:
+    """
+    Fetch Prowlarr result with timeout and fallback to virtual book.
+    Helper function extracted from search_books to reduce nesting.
+    """
+    try:
+        return await asyncio.wait_for(
+            fetch_fn(session, client_session, res, semaphore, original_query, region),
+            timeout=5.0
+        )
+    except asyncio.TimeoutError:
+        logger.warning(f"Timeout for {res.title}, creating virtual book")
+        fallback_asin = generate_virtual_asin(res.title, res.author)
+        fallback_book = Audiobook(
+            asin=fallback_asin,
+            title=res.title,
+            subtitle=None,
+            authors=[res.author],
+            release_date=res.publish_date,
+            runtime_length_min=0,
+            cover_image=None,
+        )
+        logger.warning(
+            f"VIRTUAL BOOK CREATED (Timeout) | "
+            f"Title: '{res.title}' | "
+            f"Author: '{res.author}' | "
+            f"ASIN: {fallback_asin}"
+        )
+        return (fallback_book, res)
+
+
 @router.get("", response_model=list[AudiobookSearchResult])
 async def search_books(
     client_session: Annotated[ClientSession, Depends(get_connection)],
@@ -471,142 +655,23 @@ async def search_books(
             if not query_parts:
                 query_parts = query.lower().split()
 
-            async def fetch_and_verify(p_result: ProwlarrSearchResult, semaphore: asyncio.Semaphore, original_query: str):
-                # Use semaphore to limit concurrent Audible API calls
-                async with semaphore:
-                    logger.info(
-                        f"🔍 FETCH_AND_VERIFY START | "
-                        f"Prowlarr: '{p_result.title}' by '{p_result.author}' | "
-                        f"GUID: {p_result.guid}"
-                    )
-
-                    # Step 0: Check if we have an existing virtual book that can be upgraded
-                    existing_upgraded = await check_and_upgrade_virtual_book_cached(
-                        session, client_session, p_result, region
-                    )
-                    if existing_upgraded:
-                        logger.info(
-                            f"🔄 UPGRADED EXISTING VIRTUAL BOOK | "
-                            f"Prowlarr: '{p_result.title}' | "
-                            f"New ASIN: {existing_upgraded.asin}"
-                        )
-                        return (existing_upgraded, p_result)
-                    
-                    # Step 1: Try to extract ASIN from Prowlarr metadata
-                    asin = extract_asin_from_prowlarr(p_result)
-                    if asin:
-                        book = await get_book_by_asin(client_session, asin, region)
-                        if book:
-                            logger.info(
-                                f"✅ DIRECT ASIN MATCH | "
-                                f"Prowlarr: '{p_result.title}' | "
-                                f"ASIN: {asin} | "
-                                f"Audible: '{book.title}'"
-                            )
-                            return (book, p_result)
-                    
-                    # Step 2: Try enhanced search strategies in parallel
-                    strategies = [
-                        ("title + author", f"{p_result.title} {p_result.author}"),
-                        ("primary title only", normalize_text(p_result.title, primary_only=True)),
-                        ("quoted title + author", f'"{p_result.title}" {p_result.author}'),
-                    ]
-
-                    # Helper function to try a single strategy
-                    async def try_strategy(
-                        strategy_name: str, search_query: str, strict: bool = True
-                    ) -> tuple[Audiobook, ProwlarrSearchResult] | None:
-                        try:
-                            potential_matches = await list_audible_books(
-                                session=session,
-                                client_session=client_session,
-                                query=search_query,
-                                num_results=10,
-                                audible_region=region,
-                            )
-
-                            verify_fn = verify_match if strict else verify_match_relaxed
-                            for a_result in potential_matches:
-                                if verify_fn(p_result, a_result, search_query=original_query):
-                                    logger.info(
-                                        f"✅ {'VERIFIED' if strict else 'RELAXED'} MATCH ({strategy_name}) | "
-                                        f"Prowlarr: '{p_result.title}' by '{p_result.author}' | "
-                                        f"Audible: '{a_result.title}' by {a_result.authors}"
-                                    )
-                                    return (a_result, p_result)
-                        except Exception as e:
-                            logger.warning(f"Strategy {strategy_name} failed: {e}")
-                        return None
-
-                    # Create tasks for all strategies (strict + relaxed fallback)
-                    tasks = []
-                    for strategy_name, search_query in strategies:
-                        tasks.append(try_strategy(strategy_name, search_query, strict=True))
-                    # Add relaxed strategy as fallback
-                    tasks.append(try_strategy("relaxed", strategies[0][1], strict=False))
-
-                    # Return first successful match
-                    for coro in asyncio.as_completed(tasks):
-                        result = await coro
-                        if result:
-                            # Cancel remaining tasks
-                            for task in tasks:
-                                if isinstance(task, asyncio.Task) and not task.done():
-                                    task.cancel()
-                            return result
-
-                    # Step 3: No match found - create virtual book
-                    fallback_asin = generate_virtual_asin(p_result.title, p_result.author)
-                    fallback_book = Audiobook(
-                        asin=fallback_asin,
-                        title=p_result.title,
-                        subtitle=None,
-                        authors=[p_result.author],
-                        release_date=p_result.publish_date,
-                        runtime_length_min=0,
-                        cover_image=None,
-                    )
-                    logger.warning(
-                        f"📦 VIRTUAL BOOK CREATED | "
-                        f"Title: '{p_result.title}' | "
-                        f"Author: '{p_result.author}' | "
-                        f"ASIN: {fallback_asin} | "
-                        f"Reason: No match found after all strategies"
-                    )
-                    return (fallback_book, p_result)
-
             # Create semaphore to limit concurrent Audible API calls
             settings = Settings()
             semaphore = asyncio.Semaphore(settings.app.max_concurrent_audible_requests)
             
             # Create tasks for unique results and run them in parallel with rate limiting
-            async def fetch_with_timeout(res, semaphore):
-                try:
-                    return await asyncio.wait_for(
-                        fetch_and_verify(res, semaphore, query),
-                        timeout=5.0
-                    )
-                except asyncio.TimeoutError:
-                    logger.warning(f"Timeout for {res.title}, creating virtual book")
-                    fallback_asin = generate_virtual_asin(res.title, res.author)
-                    fallback_book = Audiobook(
-                        asin=fallback_asin,
-                        title=res.title,
-                        subtitle=None,
-                        authors=[res.author],
-                        release_date=res.publish_date,
-                        runtime_length_min=0,
-                        cover_image=None,
-                    )
-                    logger.warning(
-                        f"📦 VIRTUAL BOOK CREATED (Timeout) | "
-                        f"Title: '{res.title}' | "
-                        f"Author: '{res.author}' | "
-                        f"ASIN: {fallback_asin}"
-                    )
-                    return (fallback_book, res)
-            
-            tasks = [fetch_with_timeout(res, semaphore) for res in unique_prowlarr_results.values()]
+            tasks = [
+                _fetch_with_timeout_helper(
+                    res,
+                    semaphore,
+                    _fetch_and_verify_prowlarr_result,
+                    query,
+                    region,
+                    session,
+                    client_session,
+                )
+                for res in unique_prowlarr_results.values()
+            ]
             async with timing_context("Parallel fetch & verify"):
                 parallel_results = await asyncio.gather(*tasks, return_exceptions=True)
 
@@ -656,7 +721,7 @@ async def search_books(
             if settings.app.enable_metadata_enrichment:
                 virtual_books = [b for b in results if b.asin.startswith("VIRTUAL-")]
                 virtual_book_count = len(virtual_books)
-                logger.info(f"📚 Starting metadata enrichment for {virtual_book_count} virtual books")
+                logger.info(f"Starting metadata enrichment for {virtual_book_count} virtual books")
 
                 if virtual_book_count > 0:
                     async with timing_context("Metadata enrichment"):
@@ -700,8 +765,13 @@ async def search_books(
                                     
                                     if existing:
                                         # Book already exists, update it instead of merge to avoid constraint violations
-                                        for attr in ['title', 'subtitle', 'authors', 'narrators', 'cover_image', 'release_date', 'runtime_length_min']:
-                                            setattr(existing, attr, getattr(enriched, attr))
+                                        existing.title = enriched.title
+                                        existing.subtitle = enriched.subtitle
+                                        existing.authors = enriched.authors
+                                        existing.narrators = enriched.narrators
+                                        existing.cover_image = enriched.cover_image
+                                        existing.release_date = enriched.release_date
+                                        existing.runtime_length_min = enriched.runtime_length_min
                                         results_map[book.asin] = existing
                                     else:
                                         # New book, safe to merge
@@ -717,14 +787,14 @@ async def search_books(
                         try:
                             session.commit()
                             logger.info(
-                                f"✅ Enrichment complete: {successful} successful, {failed} failed, changes persisted to database"
+                                f"Enrichment complete: {successful} successful, {failed} failed, changes persisted to database"
                             )
                         except IntegrityError:
                             # Some books already exist, that's ok - just use the in-memory versions
                             session.rollback()
                             session.expire_all()  # Clear session state after rollback
                             logger.info(
-                                f"✅ Enrichment complete (some books already in DB): {successful} successful, {failed} failed"
+                                f"Enrichment complete (some books already in DB): {successful} successful, {failed} failed"
                             )
                     except IntegrityError as e:
                         session.rollback()
@@ -751,7 +821,7 @@ async def search_books(
                         logger.warning("Continuing with non-persisted enrichment in search results")
         else:
             # Standard Audible-first search
-            logger.info(f"🔍 STANDARD AUDIBLE SEARCH | Query: '{query}' | Mode: Audible-first (NO Prowlarr verification)")
+            logger.info(f"STANDARD AUDIBLE SEARCH | Query: '{query}' | Mode: Audible-first (NO Prowlarr verification)")
             results = await list_audible_books(
                 session=session,
                 client_session=client_session,
@@ -760,7 +830,7 @@ async def search_books(
                 page=page,
                 audible_region=region,
             )
-            logger.info(f"📊 AUDIBLE SEARCH RESULTS | Found {len(results)} books from Audible API")
+            logger.info(f"AUDIBLE SEARCH RESULTS | Found {len(results)} books from Audible API")
             for idx, book in enumerate(results[:5]):
                 logger.info(f"  [{idx+1}] '{book.title}' by {book.authors} | ASIN: {book.asin}")
     else:
@@ -777,14 +847,14 @@ async def search_books(
     if (available_only and query and results and
         settings.app.enable_author_relevance_ranking):
 
-        logger.info(f"🎯 Applying author relevance ranking for {len(results)} results")
+        logger.info(f"Applying author relevance ranking for {len(results)} results")
 
         # Check cache first
         cache_key = generate_ranking_cache_key(results, query, settings)
         cached_ranking = ranking_cache.get(settings.app.ranking_cache_ttl, cache_key)
 
         if cached_ranking:
-            logger.info(f"✅ Using cached ranking for {len(results)} results")
+            logger.info(f"Using cached ranking for {len(results)} results")
             return cached_ranking
 
         # Rank results by author relevance
@@ -797,7 +867,7 @@ async def search_books(
             )
 
         # Log ranking results for debugging
-        logger.info(f"📊 RANKING RESULTS for '{query}'")
+        logger.info(f"RANKING RESULTS for '{query}'")
         for idx, result in enumerate(ranked_results[:10]):
             logger.info(
                 f"  [{idx+1}] Score: {result['score']:.1f} | "

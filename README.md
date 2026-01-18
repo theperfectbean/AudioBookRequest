@@ -131,6 +131,10 @@ In the case of an OIDC misconfiguration, i.e. changing a setting like your clien
 | `ABR_DB__POSTGRES_USER`       | Username of the postgres database.                                                                                                                                                                                                                           | abr              |
 | `ABR_DB__POSTGRES_PASSWORD`   | Password of the postgres database.                                                                                                                                                                                                                           | password         |
 | `ABR_DB__POSTGRES_SSL_MODE`   | [SSL mode](https://www.postgresql.org/docs/18/libpq-connect.html#LIBPQ-CONNECT-SSLMODE) to use for the postgres instance. **Production: Use `require` or stricter!**                                                                                         | prefer           |
+| `ABR_DB__POOL_SIZE`           | SQLAlchemy connection pool size (number of connections to maintain in pool). Recommended: number of CPU cores.                                                                                                                                               | 10               |
+| `ABR_DB__MAX_OVERFLOW`        | Maximum number of overflow connections beyond pool_size. Set higher for traffic spikes.                                                                                                                                                                    | 20               |
+| `ABR_DB__POOL_TIMEOUT`        | Timeout (seconds) to wait for a connection from the pool. Increase if seeing "QueuePool timeout" errors.                                                                                                                                                   | 30               |
+| `ABR_DB__POOL_PRE_PING`       | Enable connection health check before using from pool (detects stale connections). Recommended for production.                                                                                                                                              | true             |
 
 ### Security Recommendations
 
@@ -169,6 +173,79 @@ For production deployments, consider the following security best practices:
    ABR_APP__DEBUG=false
    ABR_APP__OPENAPI_ENABLED=false
    ```
+
+### Database Tuning
+
+Connection pool configuration is critical for production stability. The connection pool manages how many database connections are maintained and how to handle concurrent requests.
+
+#### Pool Configuration
+
+The following settings control connection pool behavior:
+
+- **`ABR_DB__POOL_SIZE`** (default: 10): Number of connections to maintain in the pool
+  - Recommendation: Set to number of CPU cores on database server
+  - SQLite: Ignored (SQLite doesn't use connection pooling)
+  - PostgreSQL: Recommended 10-20 for typical deployments
+
+- **`ABR_DB__MAX_OVERFLOW`** (default: 20): Maximum overflow connections beyond pool_size
+  - Handles traffic spikes above pool_size
+  - Increase for high-traffic deployments
+  - Total connections = pool_size + max_overflow
+
+- **`ABR_DB__POOL_TIMEOUT`** (default: 30): Timeout (seconds) to wait for available connection
+  - Increase if seeing "QueuePool timeout exceeded" errors
+  - Typical range: 10-60 seconds
+
+- **`ABR_DB__POOL_PRE_PING`** (default: true): Enable connection health check before using
+  - Prevents using stale/dropped connections
+  - Small performance overhead, recommended for production
+
+#### Example Configurations
+
+**Development (SQLite, default)**:
+```bash
+# Defaults work fine for development
+uv run fastapi dev
+```
+
+**Small Production (PostgreSQL, single server)**:
+```bash
+export ABR_DB__USE_POSTGRES=true
+export ABR_DB__POSTGRES_HOST=db.example.com
+export ABR_DB__POOL_SIZE=10
+export ABR_DB__MAX_OVERFLOW=20
+export ABR_DB__POOL_TIMEOUT=30
+```
+
+**High-Traffic Production (PostgreSQL, dedicated database)**:
+```bash
+export ABR_DB__USE_POSTGRES=true
+export ABR_DB__POSTGRES_HOST=db.example.com
+export ABR_DB__POOL_SIZE=20
+export ABR_DB__MAX_OVERFLOW=40
+export ABR_DB__POOL_TIMEOUT=60
+export ABR_DB__POSTGRES_SSL_MODE=require
+```
+
+#### Troubleshooting Connection Pool Issues
+
+| Problem | Symptoms | Solution |
+|---------|----------|----------|
+| **Pool Exhaustion** | Requests hang or timeout | Increase `POOL_SIZE` or `MAX_OVERFLOW` |
+| **Stale Connections** | Random database errors | Ensure `POOL_PRE_PING=true` (default) |
+| **Too Many Connections** | Database refuses connections | Decrease `POOL_SIZE` or `MAX_OVERFLOW` |
+| **Slow Responses** | High database latency | Check database server load, increase pool size if needed |
+
+#### Monitoring Pool Health
+
+The application logs pool configuration at startup:
+```
+INFO   Database connection pool configured database_type=PostgreSQL pool_size=10 max_overflow=20 pool_timeout=30 pool_pre_ping=true
+```
+
+Monitor database connections:
+- **PostgreSQL**: `SELECT count(*) FROM pg_stat_activity;`
+- **SQLite**: Connection count not applicable (single file-based)
 
 #### Metadata Enrichment
 

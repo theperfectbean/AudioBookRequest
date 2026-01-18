@@ -1,27 +1,14 @@
 # ---- CSS ----
-FROM alpine:3.23 AS css
+FROM node:22-alpine AS css
 WORKDIR /app
 
-RUN apk add --no-cache curl build-base && \
-    ARCH=$(uname -m) && \
-    if [ "$ARCH" = "x86_64" ]; then \
-        TAILWIND_ARCH="x64"; \
-    elif [ "$ARCH" = "aarch64" ]; then \
-        TAILWIND_ARCH="arm64"; \
-    else \
-        echo "Unsupported architecture: $ARCH" && exit 1; \
-    fi && \
-    curl -L "https://github.com/tailwindlabs/tailwindcss/releases/download/v4.1.18/tailwindcss-linux-${TAILWIND_ARCH}-musl" \
-         -o /bin/tailwindcss && \
-    chmod +x /bin/tailwindcss
+COPY package.json package-lock.json ./
+RUN npm ci
 
-RUN mkdir -p static
-
+COPY tailwind.config.js ./
 COPY templates/ templates/
 COPY static/tw.css static/tw.css
-COPY static/daisyui*.mjs static/
-RUN /bin/tailwindcss -i static/tw.css -o static/globals.css -m && \
-    apk del --no-cache curl build-base
+RUN npm run build:css
 
 # ---- Python deps ----
 FROM astral/uv:python3.12-alpine AS python-deps
@@ -53,6 +40,6 @@ ENV ABR_APP__VERSION=$VERSION
 EXPOSE 8000
 
 HEALTHCHECK --interval=30s --timeout=10s --retries=3 \
-  CMD wget -q --spider http://localhost:8000/health || exit 1
+  CMD wget -q --spider http://localhost:8000/api/health || exit 1
 
 CMD /app/.venv/bin/fastapi run --port $ABR_APP__PORT

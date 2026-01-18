@@ -168,7 +168,7 @@ def verify_match(
     # Tier 0: Fast path - exact match
     if p_title_norm == a_title_norm and p_author_norm == a_authors_norm:
         logger.info(
-            f"✅ ACCEPTED | P: '{p_result.title}' | A: '{a_result.title}' by {a_result.authors} | "
+            f"ACCEPTED | P: '{p_result.title}' | A: '{a_result.title}' by {a_result.authors} | "
             + f"Scores: title=100.0, author=100.0"
         )
         return True
@@ -223,13 +223,13 @@ def verify_match(
     # Users often search by title only, so we shouldn't reject based on author-vs-query
     if is_match:
         logger.info(
-            f"✅ ACCEPTED | P: '{p_result.title}' | A: '{a_result.title}' by {a_result.authors} | "
+            f"ACCEPTED | P: '{p_result.title}' | A: '{a_result.title}' by {a_result.authors} | "
             + f"Scores: title={title_score:.1f}, author={author_score:.1f}"
         )
         return True
     else:
         logger.warning(
-            f"❌ REJECTED | P: '{p_result.title}' | A: '{a_result.title}' by {a_result.authors} | "
+            f"REJECTED | P: '{p_result.title}' | A: '{a_result.title}' by {a_result.authors} | "
             + f"Reason: {'title mismatch' if not title_match else 'author mismatch'} | "
             + f"Scores: title={title_score:.1f}, author={author_score:.1f}"
         )
@@ -294,7 +294,7 @@ def verify_match_relaxed(
 
     if is_match:
         logger.info(
-            f"✅ RELAXED MATCH ACCEPTED | "
+            f"RELAXED MATCH ACCEPTED | "
             f"P: '{p_result.title}' | "
             f"A: '{a_result.title}' by {a_result.authors} | "
             f"Scores: title={title_score:.1f}, author={author_score:.1f}"
@@ -302,7 +302,7 @@ def verify_match_relaxed(
         return True
     else:
         logger.debug(
-            f"❌ RELAXED MATCH REJECTED | P: '{p_result.title}' | A: '{a_result.title}' by {a_result.authors} | "
+            f"RELAXED MATCH REJECTED | P: '{p_result.title}' | A: '{a_result.title}' by {a_result.authors} | "
             + f"Scores: title={title_score:.1f}, author={author_score:.1f}"
         )
         return False

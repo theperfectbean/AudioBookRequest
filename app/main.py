@@ -1,6 +1,8 @@
+import uuid
 from typing import Awaitable, Callable
 from urllib.parse import quote_plus, urlencode
 
+import structlog
 from fastapi import FastAPI, HTTPException, Request, status
 from fastapi.middleware import Middleware
 from fastapi.middleware.gzip import GZipMiddleware
@@ -21,12 +23,24 @@ from app.internal.models import User
 from app.routers import api, auth, root, search, settings, wishlist
 from app.util.db import get_session
 from app.util.fetch_js import fetch_scripts
+from app.util.log import setup_logging
 from app.util.redirect import BaseUrlRedirectResponse
 from app.util.templates import templates
 from app.util.toast import ToastException
 
+# Initialize structured logging
+app_settings = Settings().app
+setup_logging(
+    log_level=app_settings.log_level,
+    log_format=app_settings.log_format,
+    log_file=app_settings.log_file,
+    config_dir=app_settings.config_dir,
+)
+
+logger = structlog.stdlib.get_logger()
+
 # intialize js dependencies or throw an error if not in debug mode
-fetch_scripts(Settings().app.debug)
+fetch_scripts(app_settings.debug)
 
 with next(get_session()) as session:
     auth_secret = auth_config.get_auth_secret(session)
@@ -36,16 +50,32 @@ with next(get_session()) as session:
 
 app = FastAPI(
     title="AudioBookRequest",
-    debug=Settings().app.debug,
-    openapi_url="/openapi.json" if Settings().app.openapi_enabled else None,
+    debug=app_settings.debug,
+    openapi_url="/openapi.json" if app_settings.openapi_enabled else None,
     description="API for AudiobookRequest",
     middleware=[
         Middleware(DynamicSessionMiddleware, auth_secret, middleware_linker),
         Middleware(GZipMiddleware),
     ],
-    root_path=Settings().app.base_url.rstrip("/"),
+    root_path=app_settings.base_url.rstrip("/"),
     redirect_slashes=False,
 )
+
+
+# Correlation ID middleware for request tracing
+@app.middleware("http")
+async def correlation_id_middleware(request: Request, call_next: Callable):
+    """Add correlation ID to request context for tracing."""
+    correlation_id = str(uuid.uuid4())
+    # Add to request state for access in handlers
+    request.state.correlation_id = correlation_id
+    # Add to structlog context
+    structlog.contextvars.clear_contextvars()
+    structlog.contextvars.bind_contextvars(request_id=correlation_id)
+    
+    response = await call_next(request)
+    response.headers["X-Request-ID"] = correlation_id
+    return response
 
 app.include_router(auth.router, include_in_schema=False)
 app.include_router(root.router, include_in_schema=False)

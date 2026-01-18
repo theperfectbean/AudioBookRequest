@@ -16,6 +16,16 @@ class DBSettings(BaseModel):
     postgres_user: str = "abr"
     postgres_password: str = "password"
     postgres_ssl_mode: str = "prefer"
+    
+    # Connection Pool Configuration
+    pool_size: int = 10
+    """SQLAlchemy connection pool size (number of connections to maintain in pool)"""
+    max_overflow: int = 20
+    """Maximum number of overflow connections beyond pool_size"""
+    pool_timeout: int = 30
+    """Timeout (seconds) to wait for a connection from the pool"""
+    pool_pre_ping: bool = True
+    """Enable ping to detect stale connections before using them"""
 
 
 class ApplicationSettings(BaseModel):
@@ -25,6 +35,11 @@ class ApplicationSettings(BaseModel):
     port: int = 8000
     version: str = "local"
     log_level: str = "INFO"
+    """Logging level (DEBUG, INFO, WARNING, ERROR)"""
+    log_format: str = "text"
+    """Log format: 'text' for human-readable, 'json' for machine-readable"""
+    log_file: str | None = None
+    """Optional log file path (relative to config_dir/logs/). If not set, logs to stdout only"""
     base_url: str = ""
 
     default_region: str = "us"
