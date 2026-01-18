@@ -15,12 +15,11 @@ RUN apk add --no-cache curl build-base && \
          -o /bin/tailwindcss && \
     chmod +x /bin/tailwindcss
 
-RUN mkdir -p static && \
-    curl -Lo static/daisyui.mjs https://github.com/saadeghi/daisyui/releases/download/3.13.6/daisyui.mjs && \
-    curl -Lo static/daisyui-theme.mjs https://github.com/saadeghi/daisyui/releases/download/3.13.6/daisyui-theme.mjs
+RUN mkdir -p static
 
 COPY templates/ templates/
 COPY static/tw.css static/tw.css
+COPY static/daisyui*.mjs static/
 RUN /bin/tailwindcss -i static/tw.css -o static/globals.css -m && \
     apk del --no-cache curl build-base
 

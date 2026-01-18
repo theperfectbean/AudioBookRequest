@@ -1,27 +1,19 @@
 @import "tailwindcss";
 
-@source not "./daisyui{,*}.mjs";
-
-@plugin "./daisyui.mjs" {
-  themes: nord --default, night --prefersdark;
-}
-
-@plugin "./daisyui-theme.mjs" {}
-
 /* Enables dark mode specific styling with "dark:" */
 @custom-variant dark (&:where(.dark, .dark *));
 
 
 .error-alert {
-  @apply !bg-error;
+  @apply !bg-red-500;
 }
 
 .success-alert {
-  @apply !bg-success;
+  @apply !bg-green-500;
 }
 
 .info-alert {
-  @apply !bg-info;
+  @apply !bg-blue-500;
 }
 
 .slider-round {
