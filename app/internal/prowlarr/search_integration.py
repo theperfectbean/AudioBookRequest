@@ -11,10 +11,11 @@ from sqlmodel import Session
 
 from app.internal.prowlarr.prowlarr import _ProwlarrSearchResult  # pyright: ignore[reportPrivateUsage]
 from app.internal.prowlarr.util import prowlarr_config
+from app.util.cache import SimpleCache
 from app.util.log import logger
 
-# Cache for search results with TTL
-search_result_cache: dict[str, tuple[list['ProwlarrSearchResult'], float]] = {}
+# Cache for search results with TTL - using SimpleCache for thread safety
+search_result_cache: SimpleCache[list['ProwlarrSearchResult'], str] = SimpleCache()
 
 class ProwlarrSearchResult(BaseModel):
     """Enhanced search result with availability information"""
@@ -93,14 +94,13 @@ async def search_prowlarr_available(
     """
     # Check cache first
     cache_key = f"{query}:{categories}:{indexer_ids}:{limit}"
-    current_time = time.time()
     
-    if cache_key in search_result_cache:
-        cached_results, timestamp = search_result_cache[cache_key]
-        ttl = prowlarr_config.get_source_ttl(session)
-        if current_time - timestamp < ttl:
-            logger.debug("Using cached Prowlarr search results", query=query)
-            return cached_results
+    # Check cache with thread-safe SimpleCache
+    ttl = prowlarr_config.get_source_ttl(session)
+    cached_results = search_result_cache.get(ttl, cache_key)
+    if cached_results is not None:
+        logger.debug("Using cached Prowlarr search results", query=query)
+        return cached_results
     
     # Get Prowlarr configuration
     base_url = prowlarr_config.get_base_url(session)
@@ -195,8 +195,8 @@ async def search_prowlarr_available(
             logger.warning("Failed to process Prowlarr result", error=str(e), result=result)
             continue
     
-    # Cache results
-    search_result_cache[cache_key] = (available_books, current_time)
+    # Cache results using thread-safe SimpleCache
+    search_result_cache.set(available_books, cache_key)
     
     logger.info(
         "Prowlarr search completed",

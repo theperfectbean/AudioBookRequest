@@ -205,8 +205,8 @@ async def login_oidc(
             headers={"Content-Type": "application/x-www-form-urlencoded"},
         ) as response:
             body = _AccessTokenBody.model_validate(await response.json())
-    except Exception as e:
-        logger.error("Failed to extract OIDC access token from body", error=str(e))
+    except (ValueError, aiohttp.ClientError, TypeError) as e:
+        logger.error("Failed to extract OIDC access token from body", error=str(e), error_type=type(e).__name__)
         raise InvalidOIDCConfiguration(
             "Failed to extract OIDC access token from body"
         ) from e
@@ -269,8 +269,25 @@ async def login_oidc(
     # Update last_login timestamp
     user.last_login = datetime.now()
 
-    session.add(user)
-    session.commit()
+    try:
+        session.add(user)
+        session.commit()
+    except IntegrityError:
+        session.rollback()
+        # Race condition: concurrent OIDC login created same user
+        # Re-query to get the winning concurrent user
+        user = session.exec(select(User).where(User.username == username)).first()
+        if not user:
+            logger.exception("User disappeared after IntegrityError during OIDC login", username=username)
+            raise
+        # Update last_login on the user that won the race
+        user.last_login = datetime.now()
+        session.add(user)
+        session.commit()
+    except Exception as e:
+        session.rollback()
+        logger.exception("Unexpected error during OIDC user creation/login", username=username, error=str(e))
+        raise
 
     expires_in: int = (
         body.expires_in or auth_config.get_access_token_expiry_minutes(session) * 60

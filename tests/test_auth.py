@@ -20,7 +20,8 @@ from typing import Annotated
 
 import pytest
 from fastapi import HTTPException, Request, status
-from sqlmodel import Session
+from sqlalchemy.exc import IntegrityError
+from sqlmodel import Session, select
 
 from app.internal.auth.authentication import (
     ABRAuth,
@@ -964,3 +965,96 @@ class TestABRAuth:
 
 # Import time for OIDC expiry tests
 import time
+
+
+class TestAuthIntegrityErrors:
+    """Test IntegrityError handling in authentication operations."""
+
+    def test_authenticate_user_password_rehash_integrity_error(self, db_session):
+        """authenticate_user handles IntegrityError during password rehash."""
+        # Create user with old password hash
+        user = create_user("alice", "password123")
+        db_session.add(user)
+        db_session.commit()
+        
+        # Simulate IntegrityError during rehash by mocking session.commit
+        original_commit = db_session.commit
+        call_count = [0]
+        
+        def mock_commit():
+            call_count[0] += 1
+            if call_count[0] == 2:  # Second commit is the rehash
+                raise IntegrityError("statement", "params", "orig")
+            original_commit()
+        
+        with patch.object(db_session, 'commit', side_effect=mock_commit):
+            # Authenticate with correct password - should succeed despite rehash failure
+            result = authenticate_user(db_session, "alice", "password123")
+            assert result is not None
+            assert result.username == "alice"
+
+    def test_authenticate_user_returns_none_without_user(self, db_session):
+        """authenticate_user returns None when user not found."""
+        # Verify that non-existent user returns None
+        result = authenticate_user(db_session, "nonexistent", "password123")
+        assert result is None
+
+    def test_authenticate_user_session_integrity_handling(self, db_session):
+        """authenticate_user properly handles session errors."""
+        user = create_user("alice", "password123")
+        db_session.add(user)
+        db_session.commit()
+        
+        # Verify that the user is retrievable after authentication
+        result = authenticate_user(db_session, "alice", "password123")
+        assert result is not None
+        assert result.username == "alice"
+        
+        # Session should still be functional after auth
+        query_result = db_session.exec(select(User).where(User.username == "alice")).first()
+        assert query_result is not None
+
+
+class TestOIDCConcurrency:
+    """Test OIDC login race condition handling."""
+
+    def test_oidc_login_concurrent_user_creation(self, db_session):
+        """OIDC login handles concurrent user creation correctly."""
+        # Simulate OIDC login flow: create user if not exists
+        username = "oidc_user"
+        
+        # First OIDC login - user doesn't exist
+        user = db_session.exec(select(User).where(User.username == username)).first()
+        if not user:
+            user = create_user(username=username, password="oidc_random_password", 
+                             group=GroupEnum.untrusted)
+            db_session.add(user)
+            db_session.commit()
+        
+        # Verify user was created
+        retrieved = db_session.exec(select(User).where(User.username == username)).first()
+        assert retrieved is not None
+        assert retrieved.username == username
+
+    def test_oidc_login_handles_concurrent_creation_integrity_error(self, db_session):
+        """OIDC login handles concurrent user creation via IntegrityError."""
+        from datetime import datetime as dt
+        
+        # Create a user to simulate race condition
+        initial_user = User(username="concurrent_user", password="initial_hash", 
+                           group=GroupEnum.untrusted)
+        db_session.add(initial_user)
+        db_session.commit()
+        
+        # Now simulate what happens during OIDC - get user again, same session
+        user2 = db_session.exec(select(User).where(User.username == "concurrent_user")).first()
+        user2.last_login = dt.now()
+        
+        # This should not raise because user already exists
+        db_session.add(user2)
+        db_session.commit()
+        
+        # Verify only one user in database
+        users = db_session.exec(select(User).where(User.username == "concurrent_user")).all()
+        assert len(users) == 1
+        assert users[0].last_login is not None

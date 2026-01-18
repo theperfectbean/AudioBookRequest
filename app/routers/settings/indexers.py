@@ -16,7 +16,7 @@ from app.internal.indexers.indexer_util import (
     update_single_indexer,
 )
 from app.internal.models import GroupEnum
-from app.util.cache import StringConfigCache
+from app.util.cache import StringConfigCache, ModificationTracker
 from app.util.connection import get_connection
 from app.util.db import get_session
 from app.util.log import logger
@@ -25,7 +25,7 @@ from app.util.toast import ToastException
 
 IndexerConfigKey = Literal["indexers_configuration_file"]
 indexer_config = StringConfigCache[IndexerConfigKey]()
-last_modified = 0
+indexer_file_tracker = ModificationTracker()
 
 
 async def check_indexer_file_changes():
@@ -60,11 +60,9 @@ async def read_indexer_file(
     try:
         with open(file_path, "r") as f:
             values = cast(object, json.load(f))
-            global last_modified
-            if (lm := os.path.getmtime(file_path)) == last_modified:
+            file_mtime = os.path.getmtime(file_path)
+            if not indexer_file_tracker.has_changed(file_mtime):
                 return
-            else:
-                last_modified = lm
     except Exception as e:
         raise ValueError(f"Failed to read file: {e}")
 

@@ -77,8 +77,21 @@ def authenticate_user(session: Session, username: str, password: str) -> User | 
 
     if ph.check_needs_rehash(user.password):
         user.password = ph.hash(password)
-        session.add(user)
-        session.commit()
+        try:
+            session.add(user)
+            session.commit()
+        except IntegrityError:
+            session.rollback()
+            # Race condition during password rehash: another request updated the same user
+            # This is non-critical - just re-fetch and continue with old hash
+            user = session.get(User, username)
+            if not user:
+                logger.exception("User disappeared after IntegrityError during password rehash", username=username)
+                return None
+        except Exception as e:
+            session.rollback()
+            logger.exception("Unexpected error during password rehash", username=username, error=str(e))
+            raise
 
     return user
 

@@ -11,7 +11,7 @@ import pytest
 from aiohttp import ClientSession
 from sqlmodel import SQLModel, create_engine, Session
 
-from app.internal.models import Audiobook, ProwlarrSource, TorrentSource
+from app.internal.models import Audiobook, ProwlarrSource, TorrentSource, User, GroupEnum
 from app.internal.prowlarr.search_integration import ProwlarrSearchResult
 
 
@@ -336,3 +336,31 @@ def mock_google_books_response():
 def mock_google_books_empty_response():
     """Mock Google Books API empty response."""
     return {"items": [], "totalItems": 0}
+
+
+# User fixtures for authorization testing
+@pytest.fixture(scope="function")
+def admin_user(db_session) -> User:
+    """Create an admin user."""
+    user = User(username="admin", password="hashed_password", group=GroupEnum.admin)
+    db_session.add(user)
+    db_session.commit()
+    return user
+
+
+@pytest.fixture(scope="function")
+def trusted_user(db_session) -> User:
+    """Create a trusted user."""
+    user = User(username="trusted", password="hashed_password", group=GroupEnum.trusted)
+    db_session.add(user)
+    db_session.commit()
+    return user
+
+
+@pytest.fixture(scope="function")
+def untrusted_user(db_session) -> User:
+    """Create an untrusted user."""
+    user = User(username="untrusted", password="hashed_password", group=GroupEnum.untrusted)
+    db_session.add(user)
+    db_session.commit()
+    return user

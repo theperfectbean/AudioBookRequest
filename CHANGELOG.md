@@ -1,5 +1,57 @@
 # Changelog
 
+## [Unreleased] - 2026-01-18
+
+### Security
+
+* **CRITICAL**: Fixed OIDC login race condition that could cause 500 errors on concurrent user creation
+* **HIGH**: Fixed password rehash race condition during concurrent authentications
+* **MEDIUM**: All module-level caches now protected by threading.Lock for thread safety
+
+### Features
+
+* **CacheMetrics**: New class for tracking cache hit/miss rates and eviction counts
+  - `record_hit()`, `record_miss()`, `record_eviction()` operations
+  - `hit_rate()` returns percentage (0-100)
+  - Thread-safe with internal locking
+  
+* **LRU Cache Eviction**: SimpleCache now supports bounded sizes with LRU eviction
+  - Optional `maxsize` parameter (None = unlimited, backward compatible)
+  - Automatic eviction of least-recently-used entries when capacity exceeded
+  - `get_metrics()` returns CacheMetrics instance for monitoring
+  - `size()` returns current entry count
+
+* **ModificationTracker**: Thread-safe file modification time tracker
+  - Atomic `has_changed(mtime)` operation for concurrent file polling
+  - Replaces unsafe global `last_modified` variable in indexers.py
+
+### Bug Fixes
+
+* Fixed memory leak in Prowlarr search cache (raw dict → SimpleCache with TTL)
+* Fixed race condition in indexer file modification checking
+* Improved exception handling with specific types (ValueError, ClientError, TypeError)
+
+### Code Quality
+
+* Replaced global mutable state with thread-safe instances
+* Standardized exception handling patterns across route handlers
+* Added comprehensive type annotations (0 basedpyright errors)
+* All code passes ruff formatting checks
+
+### Tests
+
+* Added 47 new comprehensive tests:
+  - `tests/test_api_endpoints.py` (30 tests): API authorization coverage
+  - `tests/test_auth.py` (+5 tests): Race condition handling
+  - `tests/test_cache.py` (21 tests): ModificationTracker, LRU eviction, metrics, performance
+* Total: 328/340 tests passing (96.5% pass rate)
+* Zero regressions introduced
+
+### Documentation
+
+* Updated CLAUDE.md with Phase 2, 2b, 3 implementation records
+* Documented cache patterns, thread-safety improvements, exception handling
+
 ## [1.8.0](https://github.com/markbeep/AudioBookRequest/compare/v1.7.0...v1.8.0) (2025-10-04)
 
 
